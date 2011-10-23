@@ -64,4 +64,8 @@ public class MatrixArrayWritable implements Writable {
 		w.readFields(in);
 		return w;
 	}
+	
+	public ArrayList<RealMatrix> getData() {
+		return (ArrayList<RealMatrix>) mlist.clone();		
+	}
 }
