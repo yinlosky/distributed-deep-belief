@@ -22,9 +22,11 @@ import org.apache.log4j.Logger;
 public class ExtractImage {
 
 	private static Logger logger = Logger.getLogger(ExtractImage.class);
-	private static int imageWidth = 20;
-	private static int imageHeight = 20;
+	private static int imageWidth = 30;
+	private static int imageHeight = 30;
 	private static int overlap = 20; //which is 20%
+	private static int orginalWidth = 80;
+	private static int orginalHeight = 80;
 	
 	public static class ExtractImageMapper extends Mapper<Object, Text, Text, BytesWritable> {
 
@@ -39,9 +41,40 @@ public class ExtractImage {
 			ImgObj[] listImgObj = getImage(testFileImage, testFileLabel);
 
 			for(int i = 0; i< listImgObj.length; i++){
-				context.write(listImgObj[i].id, new BytesWritable(listImgObj[i].toByteArray()));
+				//context.write(listImgObj[i].id, new BytesWritable(listImgObj[i].toByteArray()));
+				SplitImage(context, listImgObj[i]);
 			}
 
+		}
+		
+		private void SplitImage(Context context, ImgObj img){
+			int nextX = imageWidth * (100 - overlap) / 100;
+			int nextY = imageHeight * (100 - overlap) / 100;
+			
+			for (int i = 0; i + nextX < orginalWidth; i += nextX){
+				for (int j = 0; j + nextY < orginalHeight; j += nextY){
+					
+					PortionObj pObj = new PortionObj();
+					pObj.x = i;
+					pObj.y = j;
+					pObj.pixels = getPortionImage(i,j,img.pixels);
+					pObj.label = img.label;
+					context.write(img.id, new BytesWritable(pObj.toByteArray()));
+				}
+			}
+			
+		}
+		
+		private byte[] getPortionImage(int x, int y, byte[] bytes){
+			byte[] portion = new byte[imageWidth*imageHeight];
+			int index = 0;
+			for(int i = x; i<imageWidth;i++){
+				for (int j = y; j < imageHeight; j++){
+					portion[index] = bytes[i*orginalWidth+j];
+					index++;
+				}
+			}
+			return portion;
 		}
 		
 		private ImgObj[] getImage(String imageFile, String labelFile) throws IOException {
@@ -117,6 +150,13 @@ public class ExtractImage {
 		  
 		  public class ImgObj {
 			public int id;
+			public byte[] pixels;
+			public int label;
+		}
+		
+		public class PortionObj {
+			public int x;
+			public int y;
 			public byte[] pixels;
 			public int label;
 		}
