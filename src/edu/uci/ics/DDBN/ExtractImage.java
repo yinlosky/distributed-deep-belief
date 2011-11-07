@@ -22,7 +22,10 @@ import org.apache.log4j.Logger;
 public class ExtractImage {
 
 	private static Logger logger = Logger.getLogger(ExtractImage.class);
-
+	private static int imageWidth = 20;
+	private static int imageHeight = 20;
+	private static int overlap = 20; //which is 20%
+	
 	public static class ExtractImageMapper extends Mapper<Object, Text, Text, BytesWritable> {
 
 		public void map(Object key, Text value, Context context) 
@@ -139,7 +142,12 @@ public class ExtractImage {
 			System.exit(2);
 		}
 		
-
+		if(otherArgs.length >= 5){
+			imageWidth = Integer.parseInt( otherArgs[2] );;
+			imageHeight = Integer.parseInt( otherArgs[3] );;
+			overlap = Integer.parseInt( otherArgs[4] );; //which is 20%
+		}
+	
 		Job job = new Job(conf, "ExtractImage");
 		job.setJarByClass(ExtractImage.class);
 		job.setMapperClass(ExtractImageMapper.class);
