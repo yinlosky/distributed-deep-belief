@@ -14,6 +14,10 @@ public class jBLASArrayWritable implements Writable {
 		this.mlist = new ArrayList<DoubleMatrix>(Arrays.asList(mlist));
 	}
 	
+	public jBLASArrayWritable(ArrayList<DoubleMatrix> mlist) {
+		this.mlist = mlist;
+	}
+	
 	public jBLASArrayWritable() {
 		this.mlist = new ArrayList<DoubleMatrix>();
 	}

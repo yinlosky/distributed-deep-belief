@@ -67,7 +67,7 @@ public class BinarySigmoidRBM {
 			for(int i = 0; i < hidden_state.size(); i++) {
 				data.set(3+i,hidden_state.get(i));
 			}
-			jBLASArrayWritable outputmatrix = new jBLASArrayWritable();
+			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(data);
 			output.collect(key, outputmatrix);
 		}
 		
@@ -124,6 +124,12 @@ public class BinarySigmoidRBM {
 				OutputCollector<LongWritable, jBLASArrayWritable> output,
 				Reporter reporter) throws IOException {
 			DoubleMatrix weights = null,hbias = null,vbias = null;
+			
+			ArrayList<DoubleMatrix> output_array = new ArrayList<DoubleMatrix>();
+			output_array.add(weights);
+			output_array.add(hbias);
+			output_array.add(vbias);
+			
 			while(inputs.hasNext()) {
 				jBLASArrayWritable input = inputs.next();
 				ArrayList<DoubleMatrix> data = input.getData();
@@ -139,10 +145,11 @@ public class BinarySigmoidRBM {
 				}
 				weights.add(w_cont);
 				hbias.add(hb_cont);
-				vbias.add(vb_cont);		
+				vbias.add(vb_cont);
+				output_array.add(data.get(3));
 			}
-			ArrayList<DoubleMatrix>
-			context.write(key,)
+			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(output_array);
+			output.collect(key,outputmatrix);
 		}
 		
 	}
