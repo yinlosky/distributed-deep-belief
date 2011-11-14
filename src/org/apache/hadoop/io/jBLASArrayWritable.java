@@ -67,8 +67,8 @@ public class jBLASArrayWritable implements Writable {
 		return;
 	}
 	
-	public MatrixArrayWritable read(ObjectInputStream in) throws IOException, ClassNotFoundException {
-		MatrixArrayWritable w = new MatrixArrayWritable();
+	public jBLASArrayWritable read(ObjectInputStream in) throws IOException, ClassNotFoundException {
+		jBLASArrayWritable w = new jBLASArrayWritable();
 		w.readFields(in);
 		return w;
 	}
