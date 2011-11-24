@@ -30,7 +30,6 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.LineRecordReader;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
-@SuppressWarnings("deprecation")
 public class BatchGenerationEngine extends Configured implements Tool {
 	public static class BatchInputFormat extends FileInputFormat<IntWritable,Text> {
 
@@ -44,7 +43,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		}
 		
 	}
-	
 	public static class ImageReader extends RecordReader<IntWritable,Text> {
 		private LineRecordReader lineReader;
 		private IntWritable lineKey;
@@ -89,7 +87,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		}
 		
 	}
-	
 	public static class ImageSplit extends Mapper<IntWritable,Text,IntWritable,Text> {
 		private IntWritable sameKey = new IntWritable(0);
 		private Text dataString = new Text();
@@ -104,7 +101,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			output.collect(sameKey, dataString);
 		}
 	}
-	
 	public static class Minibatcher extends Reducer<IntWritable,Text,Text,jBLASArrayWritable> {
 		private Text batchID = new Text();
 		private jBLASArrayWritable dataArray;
@@ -242,7 +238,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		}
 		
 		String[] tool_args = other_args.toArray(new String[0]);
-		int result = ToolRunner.run(new Configuration(), new BatchGenerationEngine(), tool_args);
+		int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
 		System.exit(result);
 	}	
 }
