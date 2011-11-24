@@ -1,6 +1,6 @@
 package edu.uci.ics.DDBN;
 
-import java.io.*; 
+import java.io.*;  
 import java.util.*;
 import org.apache.log4j.Logger;
 
@@ -16,6 +16,7 @@ import org.jblas.DoubleMatrix;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.*;
 import org.apache.hadoop.mapred.OutputCollector;
@@ -30,6 +31,9 @@ import org.apache.hadoop.util.*;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.LineRecordReader;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.commons.logging.Log;
 
 @SuppressWarnings("deprecation")
 public class BatchGenerationEngine extends Configured implements Tool {
@@ -38,8 +42,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 	public static class BatchInputFormat extends FileInputFormat<IntWritable,Text> {
 
 		@Override
-		public RecordReader<IntWritable, Text> createRecordReader(InputSplit is,
-				TaskAttemptContext tac) throws IOException,
+		public RecordReader<IntWritable, Text> createRecordReader(InputSplit is, TaskAttemptContext tac) throws IOException,
 				InterruptedException {
 			ImageReader ir = new ImageReader();
 			ir.initialize(is,tac);
@@ -252,11 +255,30 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
 		// End phase 1
 		
-		// distribute those output from phase 1 into different directories
+		// get example count and size from xml file
+		// count = count_size[0];
+		// size = count_size[1];
+		int[] count_size = parseJobSetup(xmlPath);
 		
+		// distribute those output from phase 1 into different directories
+        String outputPhase1 = tool_args[1];
+        FileSystem fs = FileSystem.get(new Configuration());
+		Path outputPhase1Path = new Path(outputPhase1);
+	    fs.setWorkingDirectory(outputPhase1Path);
+	    FileStatus[] outputP1AllFiles = fs.listStatus(outputPhase1Path);
+	    for (int i = 0; i < outputP1AllFiles.length; i++){
+	    	int batchNum = i/count_size[1];
+	    	Path batchPath = new Path(outputPhase1 + "/batch"+ batchNum);
+	    	
+	    	//if batch# directory not exists, mkdir
+	    	if (!fs.exists(batchPath))
+	    		FileSystem.mkdirs(fs, batchPath, new FsPermission("777"));
+	    	//move file into the batch# directory
+	    	fs.rename(outputP1AllFiles[i].getPath(), new Path(outputPhase1 + "/batch"+ batchNum + "/" + outputP1AllFiles[i].getPath().getName()));
+	    }
 		//
 		
-		int[] count_size = parseJobSetup(xmlPath);
+
 		
 		//Generate dictionary of jobs
 		int numberOfJobs = count_size[0] * count_size[1];
