@@ -1,3 +1,5 @@
+//bin/hadoop jar minibatch.jar edu.uci.ics.DDBN.BatchGenerationEngine -setup /user/hadoop/batch_conf/batch_conf.xml
+
 package edu.uci.ics.DDBN;
 
 import java.io.*;
@@ -27,14 +29,14 @@ import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.util.*;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
-import org.apache.hadoop.mapreduce.lib.input.LineRecordReader;
+import org.apache.hadoop.mapreduce.lib.input.SequenceFileRecordReader;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class BatchGenerationEngine extends Configured implements Tool {
-	public static class BatchInputFormat extends FileInputFormat<IntWritable,Text> {
+	public static class BatchInputFormat extends FileInputFormat<IntWritable,LabelImageWritable> {
 
 		@Override
-		public RecordReader<IntWritable, Text> createRecordReader(InputSplit is,
+		public RecordReader<IntWritable, LabelImageWritable> createRecordReader(InputSplit is,
 				TaskAttemptContext tac) throws IOException,
 				InterruptedException {
 			ImageReader ir = new ImageReader();
@@ -43,14 +45,14 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		}
 		
 	}
-	public static class ImageReader extends RecordReader<IntWritable,Text> {
-		private LineRecordReader lineReader;
+	public static class ImageReader extends RecordReader<IntWritable,LabelImageWritable> {
+		private SequenceFileRecordReader<Text,LabelImageWritable> reader;
 		private IntWritable lineKey;
-		private Text lineValue;		
+		private LabelImageWritable lineValue;		
 		
 		@Override
 		public void close() throws IOException {
-			lineReader.close();
+			reader.close();
 		}
 
 		@Override
@@ -59,49 +61,49 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		}
 
 		@Override
-		public Text getCurrentValue() throws IOException, InterruptedException {
+		public LabelImageWritable getCurrentValue() throws IOException, InterruptedException {
 			return lineValue;
 		}
 
 		@Override
 		public float getProgress() throws IOException, InterruptedException {
-			return lineReader.getProgress();
+			return reader.getProgress();
 		}
 
 		@Override
 		public void initialize(InputSplit is, TaskAttemptContext tac)
 				throws IOException, InterruptedException {
-			lineReader = new LineRecordReader();
-			lineReader.initialize(is, tac);
+			reader = new SequenceFileRecordReader<Text,LabelImageWritable>();
+			reader.initialize(is, tac);
 		}
 
 		@Override
 		public boolean nextKeyValue() throws IOException, InterruptedException {
-			if(!lineReader.nextKeyValue()) {
+			if(!reader.nextKeyValue()) {
 				return false;
 			}
-			String[] segment = lineReader.getCurrentValue().toString().split("\t");
-			lineKey = new IntWritable(Integer.parseInt(segment[0]));
-			lineValue = new Text(segment[1] + "\t" + segment[2]);
+			lineKey = new IntWritable(Integer.parseInt(reader.getCurrentKey().toString()));
+			lineValue = reader.getCurrentValue();
 			return true;
 		}
 		
 	}
-	public static class ImageSplit extends Mapper<IntWritable,Text,IntWritable,Text> {
+	
+	public static class Record {
+		public int number;
+		public int label;
+		public byte[] data;
+	}
+	
+	public static class ImageSplit extends Mapper<IntWritable,LabelImageWritable,IntWritable,LabelImageWritable> {
 		private IntWritable sameKey = new IntWritable(0);
-		private Text dataString = new Text();
 		
-		public void map(IntWritable key, Text value,
-				OutputCollector<IntWritable,Text> output, Reporter reporter) throws IOException {
-			String dataRow = value.toString();
-			StringTokenizer tk = new StringTokenizer(dataRow);
-			String label = tk.nextToken();
-			String image = tk.nextToken();
-			dataString.set(label + "\t" + image);			
-			output.collect(sameKey, dataString);
+		public void map(IntWritable key, LabelImageWritable value,
+				OutputCollector<IntWritable,LabelImageWritable> output, Reporter reporter) throws IOException {		
+			output.collect(sameKey, value);
 		}
 	}
-	public static class Minibatcher extends Reducer<IntWritable,Text,Text,jBLASArrayWritable> {
+	public static class Minibatcher extends Reducer<IntWritable,LabelImageWritable,Text,jBLASArrayWritable> {
 		private Text batchID = new Text();
 		private jBLASArrayWritable dataArray;
 		
@@ -160,7 +162,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			}
 		}
 		
-		public void reduce(IntWritable sameNum, Iterator<Text> data,
+		public void reduce(IntWritable sameNum, Iterator<LabelImageWritable> data,
 				OutputCollector<Text,jBLASArrayWritable> output, Reporter reporter) throws IOException {
 			int totalBatchCount = exampleCount/batchSize;
 			
@@ -184,11 +186,12 @@ public class BatchGenerationEngine extends Configured implements Tool {
 				j = 0;
 				while(data.hasNext() && j < batchSize ) {
 					j++;
-					StringTokenizer tk = new StringTokenizer(data.next().toString());
-					label.put(0, Double.parseDouble(tk.nextToken()));
-					String image = tk.nextToken();
-					for(int k = 0; k < image.length(); k++) {
-						Integer val = new Integer( image.charAt(k) );
+					LabelImageWritable labelImagePair = data.next();
+					Integer labelInt = new Integer(labelImagePair.getLabel());
+					label.put(0, labelInt.doubleValue() );
+					byte[] imageArray = labelImagePair.getImage();
+					for(int k = 0; k < imageArray.length; k++) {
+						Integer val = new Integer( imageArray[i] );
 						vdata.put(j,k, val.doubleValue());
 					}
 					dataArray = new jBLASArrayWritable(outputmatricies);
@@ -209,8 +212,8 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		
 		job.setInputFormatClass(BatchInputFormat.class);
 		
-		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(jBLASArrayWritable.class);
+		job.setOutputKeyClass(IntWritable.class);
+		job.setOutputValueClass(LabelImageWritable.class);
 		
 		job.setMapperClass(ImageSplit.class);
 		job.setCombinerClass(Minibatcher.class);
