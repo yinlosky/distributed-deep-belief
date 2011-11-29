@@ -4,25 +4,27 @@ import java.io.*;
 
 public class LabelImageWritable implements Writable {
 	
-	private final int IMAGE_SIZE = 28*28;
+	private int imageSize;
 	private int label;
 	private byte[] image;
 	
-	public LabelImageWritable(int label, byte[] image) {
+	public LabelImageWritable(int label, byte[] image, int imageSize) {
+		this.imageSize = imageSize;
 		this.label = label;
 		this.image = image;
 	}
 	
 	public LabelImageWritable() {
 		this.label = 0;
-		this.image = new byte[IMAGE_SIZE];
+		this.imageSize = 28*28;
+		this.image = new byte[imageSize];
 	}
 	
 	@Override
 	public void readFields(DataInput in) throws IOException {
 		this.label = in.readInt();
 		in.readChar(); //pull off separating tab
-		for(int i = 0; i < IMAGE_SIZE; i++) {
+		for(int i = 0; i < imageSize; i++) {
 			this.image[i] = in.readByte();
 		}
 	}
@@ -31,7 +33,7 @@ public class LabelImageWritable implements Writable {
 	public void write(DataOutput out) throws IOException {
 		out.writeInt(this.label);
 		out.writeChar('\t');
-		for(int i = 0; i < IMAGE_SIZE; i++) {
+		for(int i = 0; i < imageSize; i++) {
 			out.writeByte(this.image[i]);
 		}
 	}
