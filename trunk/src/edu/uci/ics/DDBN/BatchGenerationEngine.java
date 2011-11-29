@@ -46,7 +46,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		
 	}
 	public static class ImageReader extends RecordReader<IntWritable,LabelImageWritable> {
-		private SequenceFileRecordReader<Text,LabelImageWritable> reader;
+		private SequenceFileRecordReader<IntWritable, LabelImageWritable> reader;
 		private IntWritable lineKey;
 		private LabelImageWritable lineValue;		
 		
@@ -73,7 +73,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		@Override
 		public void initialize(InputSplit is, TaskAttemptContext tac)
 				throws IOException, InterruptedException {
-			reader = new SequenceFileRecordReader<Text,LabelImageWritable>();
+			reader = new SequenceFileRecordReader<IntWritable, LabelImageWritable>();
 			reader.initialize(is, tac);
 		}
 
@@ -82,7 +82,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			if(!reader.nextKeyValue()) {
 				return false;
 			}
-			lineKey = new IntWritable(Integer.parseInt(reader.getCurrentKey().toString()));
+			lineKey = reader.getCurrentKey();
 			lineValue = reader.getCurrentValue();
 			return true;
 		}
