@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+ <property>
+  <name>visible.nodes</name>
+  <value>784</value>
+ </property>
+ <property>
+  <name>hidden.nodes</name>
+  <value>500</name>
+ </property>
+ <property>
+  <name>example.count</name>
+  <value>60000</value>
+ </property>
+ <property>
+  <name>batch.size</name>
+  <value>20</value>
+ </property>
+</configuration>
