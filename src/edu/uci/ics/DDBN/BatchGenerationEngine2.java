@@ -36,7 +36,7 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.commons.logging.Log;
 
 @SuppressWarnings("deprecation")
-public class BatchGenerationEngine extends Configured implements Tool {
+public class BatchGenerationEngine2 extends Configured implements Tool {
 	
 	private static Logger logger = Logger.getLogger(BatchGenerationEngine.class);
 	public static class BatchInputFormat extends FileInputFormat<IntWritable,Text> {
@@ -236,6 +236,10 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		System.out.println("Beginning job...");
 		// Start phase 1
 		Configuration conf = new Configuration();
+		
+		conf.set("mapred.job.tracker", "local");
+		conf.set("fs.default.name", "local");
+		
 		String[] inputArgs = new GenericOptionsParser(conf,args).getRemainingArgs();
 		
 		Path xmlPath = null;

@@ -11,15 +11,24 @@ public class jBLASArrayWritable implements Writable {
 	private ArrayList<DoubleMatrix> mlist;
 	
 	public jBLASArrayWritable(DoubleMatrix[] mlist) {
-		this.mlist = new ArrayList<DoubleMatrix>(Arrays.asList(mlist));
+		set(mlist);
 	}
 	
 	public jBLASArrayWritable(ArrayList<DoubleMatrix> mlist) {
-		this.mlist = mlist;
+		set(mlist);
 	}
 	
 	public jBLASArrayWritable() {
 		this.mlist = new ArrayList<DoubleMatrix>();
+	}
+	
+	public void set(DoubleMatrix[] mlist) {
+		this.mlist = new ArrayList<DoubleMatrix>(Arrays.asList(mlist));
+	}
+	
+	@SuppressWarnings("unchecked")
+	public void set(ArrayList<DoubleMatrix> mlist) {
+		this.mlist = (ArrayList<DoubleMatrix>) mlist.clone();
 	}
 	
 	@Override
@@ -46,6 +55,7 @@ public class jBLASArrayWritable implements Writable {
 			for(int j = 0; j < cols; j++)
 				temp[i][j] = in.readDouble();
 		return new DoubleMatrix(temp);
+		
 	}
 	
 	@Override
@@ -65,7 +75,7 @@ public class jBLASArrayWritable implements Writable {
 		out.writeInt(cols);
 		for(int i = 0; i < rows; i++) {
 			for(int j = 0; j < cols; j++) {
-				out.writeDouble(M.get(rows, cols));
+				out.writeDouble(M.get(i, j));
 			}
 		}
 		return;
@@ -77,6 +87,7 @@ public class jBLASArrayWritable implements Writable {
 		return w;
 	}
 	
+	@SuppressWarnings("unchecked")
 	public ArrayList<DoubleMatrix> getData() {
 		return (ArrayList<DoubleMatrix>) mlist.clone();		
 	}
