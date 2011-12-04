@@ -3,7 +3,6 @@ package edu.uci.ics.DDBN;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -14,15 +13,16 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.jBLASArrayWritable;
-import org.apache.hadoop.mapred.OutputCollector;
-import org.apache.hadoop.mapred.Reporter;
+import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.SequenceFileRecordReader;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.*;
 import org.jblas.DoubleMatrix;
@@ -32,8 +32,72 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
 
+
 public class BinarySigmoidRBM extends Configured implements Tool {
-	public static class GibbsSampling extends Mapper<LongWritable, jBLASArrayWritable, LongWritable, jBLASArrayWritable> {
+	public static class BatchFormat extends FileInputFormat<Text,jBLASArrayWritable> {
+
+		@Override
+		public RecordReader<Text, jBLASArrayWritable> createRecordReader(
+				InputSplit split, TaskAttemptContext context)
+				throws IOException, InterruptedException {
+			BatchReader br = new BatchReader();
+			br.initialize(split,context);
+			return br;
+		}
+		
+	}
+	
+	public static class BatchReader extends RecordReader<Text,jBLASArrayWritable> {
+		private SequenceFileRecordReader<Text, jBLASArrayWritable> reader;
+		Text key;
+		jBLASArrayWritable value;
+		
+		@Override
+		public void close() throws IOException {
+			reader.close();
+		}
+
+		@Override
+		public Text getCurrentKey() throws IOException, InterruptedException {
+			return key;
+		}
+
+		@Override
+		public jBLASArrayWritable getCurrentValue() throws IOException,
+				InterruptedException {
+			return value;
+		}
+
+		@Override
+		public float getProgress() throws IOException, InterruptedException {
+			return reader.getProgress();
+		}
+
+		@Override
+		public void initialize(InputSplit split, TaskAttemptContext context)
+				throws IOException, InterruptedException {
+			reader = new SequenceFileRecordReader<Text,jBLASArrayWritable>();
+			key = new Text();
+			value = new jBLASArrayWritable();
+			reader.initialize(split, context);
+		}
+
+		@Override
+		public boolean nextKeyValue() throws IOException, InterruptedException {
+			if(!reader.nextKeyValue()) {
+				return false;
+			}
+			key = new Text();
+			value = new jBLASArrayWritable();			
+			
+			key = reader.getCurrentKey();
+			value = reader.getCurrentValue();
+			return true;
+		}
+		
+	}
+	
+	public static class GibbsSampling extends Mapper<Text, jBLASArrayWritable, Text, jBLASArrayWritable> {
 		private DoubleMatrix weights,hbias,vbias;
 		private List<DoubleMatrix> hidden_state,v_data;
 		private DoubleMatrix v1_data,h1_data;
@@ -41,6 +105,22 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		
 		private int gibbsSteps = 1;
 		private double learningRate = 0.1;
+		
+		@Override
+		public void setup(GibbsSampling.Context context) {
+			Configuration conf = context.getConfiguration();
+			if (conf.getBoolean("minibatch.job.setup", false)) {
+				Path[] jobSetupFiles = new Path[0];
+				try {
+					jobSetupFiles = DistributedCache.getLocalCacheFiles(conf);	
+				} catch (IOException ioe) {
+					System.err.println("Caught exception while getting cached files: " + StringUtils.stringifyException(ioe));
+				}
+				for (Path jobSetup : jobSetupFiles) {
+					parseJobSetup(jobSetup);
+				}
+			}
+		}
 		
 		private String xmlGetSingleValue(Element el, String tag) {
 			return ((Element)el.getElementsByTagName(tag).item(0)).getFirstChild().getNodeValue();
@@ -57,9 +137,9 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 					for(int i = 0; i < nodes.getLength(); i++) {
 						Element property = (Element)nodes.item(i);
 						String elName = xmlGetSingleValue(property,"name");
-						if(elName == "gibbs.steps") {
+						if(elName.compareToIgnoreCase("gibbs.steps") == 0) {
 							this.gibbsSteps = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName == "learning.rate") {
+						} else if(elName.compareToIgnoreCase("learning.rate") == 0) {
 							this.learningRate = Double.parseDouble(xmlGetSingleValue(property,"value"));
 						}
 					}
@@ -74,10 +154,10 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			}
 		}
 		
-		public void map(LongWritable key,
+		@Override
+		public void map(Text key,
 				jBLASArrayWritable input,
-				OutputCollector<LongWritable, jBLASArrayWritable> output,
-				Reporter reporter) throws IOException {
+				GibbsSampling.Context context) throws IOException, InterruptedException {
 			ArrayList<DoubleMatrix> data = input.getData();
 			weights = data.get(0);
 			hbias = data.get(1);
@@ -116,7 +196,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 				data.set(3+i,hidden_state.get(i));
 			}
 			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(data);
-			output.collect(key, outputmatrix);
+			context.write(key, outputmatrix);
 		}
 		
 		public DoubleMatrix sample_h_from_v(DoubleMatrix v0) {
@@ -163,12 +243,12 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			this.hb1.add(h0.sub(h1).mul(learningRate));
 		}
 	}
-	public static class WeightContributions extends Reducer<LongWritable, jBLASArrayWritable, LongWritable, jBLASArrayWritable> {
+	public static class WeightContributions extends Reducer<Text, jBLASArrayWritable, Text, jBLASArrayWritable> {
 
-		public void reduce(LongWritable key,
-				Iterator<jBLASArrayWritable> inputs,
-				OutputCollector<LongWritable, jBLASArrayWritable> output,
-				Reporter reporter) throws IOException {
+		@Override
+		public void reduce(Text key,
+				Iterable<jBLASArrayWritable> inputs,
+				WeightContributions.Context context) throws IOException, InterruptedException {
 			DoubleMatrix weights = null,hbias = null,vbias = null;
 			
 			ArrayList<DoubleMatrix> output_array = new ArrayList<DoubleMatrix>();
@@ -176,10 +256,8 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			output_array.add(hbias);
 			output_array.add(vbias);
 			
-			while(inputs.hasNext()) {
-				jBLASArrayWritable input = inputs.next();
+			for(jBLASArrayWritable input : inputs) {
 				ArrayList<DoubleMatrix> data = input.getData();
-				
 				DoubleMatrix w_cont = data.get(0);
 				DoubleMatrix hb_cont = data.get(1);
 				DoubleMatrix vb_cont = data.get(2);
@@ -195,7 +273,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 				output_array.add(data.get(3));
 			}
 			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(output_array);
-			output.collect(key,outputmatrix);
+			context.write(key,outputmatrix);
 		}
 		
 	}
@@ -208,12 +286,15 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		
 		job.setJarByClass(BinarySigmoidRBM.class);
 		
+		job.setInputFormatClass(BatchFormat.class);
+		
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(jBLASArrayWritable.class);
 		
 		job.setMapperClass(GibbsSampling.class);
-		job.setCombinerClass(WeightContributions.class);
 		job.setReducerClass(WeightContributions.class);
+		
+		job.setNumReduceTasks(1);
 				
 		FileInputFormat.setInputPaths(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));

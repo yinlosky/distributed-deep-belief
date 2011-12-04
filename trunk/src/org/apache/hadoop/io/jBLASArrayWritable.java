@@ -68,6 +68,8 @@ public class jBLASArrayWritable implements Writable {
 	
 	private void writeMatrix(DataOutput out, DoubleMatrix M) throws IOException {
 		if(M == null) {
+			out.writeInt(0);
+			out.writeInt(0);
 			return;
 		}
 		int rows = M.rows,cols = M.columns;
