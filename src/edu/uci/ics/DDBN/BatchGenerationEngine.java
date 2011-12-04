@@ -102,12 +102,13 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		public byte[] data;
 	}
 	
-	public static class ImageSplit extends Mapper<IntWritable,LabelImageWritable,Text,jBLASArrayWritable> {
-		private Text sameKey = new Text("0");
+	public static class ImageSplit extends Mapper<IntWritable,LabelImageWritable,IntWritable,jBLASArrayWritable> {
+		private IntWritable sameKey = new IntWritable(0);
 		private DoubleMatrix imageMat = null;
 		private DoubleMatrix label = null;
 		private jBLASArrayWritable output = null;
 		
+		@Override
 		public void map(IntWritable key, LabelImageWritable value,
 				ImageSplit.Context context) throws IOException, InterruptedException {
 			byte[] image = value.getImage();
@@ -130,7 +131,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			//log.info("Completed key "+key.toString());
 		}
 	}
-	public static class Minibatcher extends Reducer<Text,jBLASArrayWritable,Text,jBLASArrayWritable> {
+	public static class Minibatcher extends Reducer<IntWritable,jBLASArrayWritable,Text,jBLASArrayWritable> {
 		private Text batchID = new Text();
 		private jBLASArrayWritable dataArray;
 		
@@ -189,12 +190,11 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			}
 		}
 		
-		public void reduce(Text sameNum, Iterator<jBLASArrayWritable> data,
+		@Override
+		public void reduce(IntWritable sameNum, Iterable<jBLASArrayWritable> data,
 				Minibatcher.Context context) throws IOException, InterruptedException {
 			int totalBatchCount = exampleCount/batchSize;
-			
-			log.info("Entered reducer");
-			
+			Iterator<jBLASArrayWritable> dataIter = data.iterator();			
 			DoubleMatrix weights = DoubleMatrix.randn(hiddenNodes,visibleNodes);
 			DoubleMatrix hbias = DoubleMatrix.zeros(hiddenNodes);
 			DoubleMatrix vbias = DoubleMatrix.zeros(visibleNodes);
@@ -212,16 +212,15 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			
 			int j;
 			for(int i = 1; i <= totalBatchCount; i++) {
-				log.info(String.format("Started batch %d",i));
 				j = 0;
-				while(data.hasNext() && j < batchSize ) {
-					jBLASArrayWritable imageStore = data.next();
+				while(dataIter.hasNext() && j < batchSize ) {
+					jBLASArrayWritable imageStore = dataIter.next();
 					ArrayList<DoubleMatrix> list = imageStore.getData();
 					vdata.putRow(j, list.get(0));
 					label.put(j,list.get(1).get(0));
 					j++;
 				}
-				batchID.set(i+" ");
+				batchID.set(i+"");
 				dataArray = new jBLASArrayWritable(cloneList(outputmatricies));
 				context.write(batchID, dataArray);
 				//log.info("Finished batch " + i);
@@ -256,7 +255,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
 		
 		job.setMapperClass(ImageSplit.class);
-		job.setCombinerClass(Minibatcher.class);
 		job.setReducerClass(Minibatcher.class);
 		
 		job.setNumReduceTasks(1);
@@ -265,10 +263,10 @@ public class BatchGenerationEngine extends Configured implements Tool {
 				
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(jBLASArrayWritable.class);
-		job.setMapOutputKeyClass(Text.class);
+		job.setMapOutputKeyClass(IntWritable.class);
 		job.setMapOutputValueClass(jBLASArrayWritable.class);
 		
-		//job.setOutputFormatClass(BatchOutputFormat.class);
+		job.setOutputFormatClass(BatchOutputFormat.class);
 		
 		return job.waitForCompletion(true) ? 0 : 1;
 	}
@@ -292,10 +290,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
 		
 		//distribute into different batch
-		Path dir = new Path(tool_args[1]);
-		FileSystem fs = FileSystem.get(conf);
-		OutputSplitDir outputSplitDir = new OutputSplitDir(dir,conf,fs);
-		outputSplitDir.execute();
 				
 		System.exit(result);
 	}	
