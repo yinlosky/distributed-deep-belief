@@ -25,6 +25,14 @@ public class OutputSplitDir {
 	Configuration conf;
 	Path dir;
 	
+	public static void main(String[] args) throws IOException {
+		Configuration conf = new Configuration();
+		FileSystem fs = FileSystem.getLocal(conf);
+		Path path = new Path("/media/The_Universe/hadoop/tmp_hdfs/test");
+		OutputSplitDir outmod = new OutputSplitDir(path,conf,fs);
+		outmod.execute();
+	}
+	
 	public OutputSplitDir(Path dir, Configuration conf, FileSystem fs) throws IOException{
 		Path path = new Path(dir.toString()+"/part-r-00000");
 		this.reader = new SequenceFile.Reader(fs,path,conf);
@@ -56,6 +64,8 @@ public class OutputSplitDir {
 			}
 			//use sequenceFileWriter to write value into 
 			writer.append(key, value);
+			key = new Text();
+			value = new jBLASArrayWritable(); 
 		}
 		reader.close();
 		writer.close();

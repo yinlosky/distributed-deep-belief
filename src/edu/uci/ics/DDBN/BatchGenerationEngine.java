@@ -140,7 +140,11 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		private int exampleCount = 60000;
 		private int batchSize = 20;
 		
-		public void configure(Configuration conf) {
+		@Override
+		public void setup(Minibatcher.Context context) {
+			
+			Configuration conf = context.getConfiguration();
+			
 			if (conf.getBoolean("minibatch.job.setup", false)) {
 				Path[] jobSetupFiles = new Path[0];
 				try {
@@ -169,13 +173,13 @@ public class BatchGenerationEngine extends Configured implements Tool {
 					for(int i = 0; i < nodes.getLength(); i++) {
 						Element property = (Element)nodes.item(i);
 						String elName = xmlGetSingleValue(property,"name");
-						if(elName == "visible.nodes") {
+						if(elName.compareToIgnoreCase("visible.nodes") == 0) {
 							this.visibleNodes = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName == "hidden.nodes") {
+						} else if(elName.compareToIgnoreCase("hidden.nodes") == 0) {
 							this.hiddenNodes = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName == "example.count") {
+						} else if(elName.compareToIgnoreCase("example.count") == 0) {
 							this.exampleCount = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName == "batch.size") {
+						} else if(elName.compareToIgnoreCase("batch.size") == 0) {
 							this.batchSize = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						}
 					}
@@ -193,8 +197,10 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		@Override
 		public void reduce(IntWritable sameNum, Iterable<jBLASArrayWritable> data,
 				Minibatcher.Context context) throws IOException, InterruptedException {
+			
 			int totalBatchCount = exampleCount/batchSize;
 			Iterator<jBLASArrayWritable> dataIter = data.iterator();			
+			
 			DoubleMatrix weights = DoubleMatrix.randn(hiddenNodes,visibleNodes);
 			DoubleMatrix hbias = DoubleMatrix.zeros(hiddenNodes);
 			DoubleMatrix vbias = DoubleMatrix.zeros(visibleNodes);
@@ -212,6 +218,9 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			
 			int j;
 			for(int i = 1; i <= totalBatchCount; i++) {
+				if(!dataIter.hasNext()) {
+					break;
+				}
 				j = 0;
 				while(dataIter.hasNext() && j < batchSize ) {
 					jBLASArrayWritable imageStore = dataIter.next();
