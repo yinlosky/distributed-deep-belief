@@ -285,10 +285,12 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		Configuration conf = new Configuration();
 		String[] inputArgs = new GenericOptionsParser(conf,args).getRemainingArgs();
 		
+		Path xmlPath = null;
 		List<String> other_args = new ArrayList<String>();
 		for(int i = 0; i < args.length; ++i) {
 			if("-setup".equals(inputArgs[i])) {
-				DistributedCache.addCacheFile(new Path(inputArgs[++i]).toUri(),conf);
+				xmlPath = new Path(inputArgs[++i]);
+				DistributedCache.addCacheFile(xmlPath.toUri(),conf);
 				conf.setBoolean("minibatch.job.setup",true);
 			} else {
 				other_args.add(inputArgs[i]);
@@ -298,8 +300,114 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		String[] tool_args = other_args.toArray(new String[0]);
 		int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
 		
-		//distribute into different batch
-				
+		log.info("distribute into different batch...");
+		distributeFiles(tool_args[1]);
+		
+		log.info("create Jobs...");
+		// get example count and size from xml file
+		// count = count_size[0];
+		// size = count_size[1];
+		int[] count_size = parseJobSetup(xmlPath);
+		int numJobs = 2;//count_size[1];
+		JobConfig[] dictionary = createJobsDic(conf, tool_args[1]+"/1",tool_args[1], numJobs);
+		
+		log.info("Run Sequence Jobs...");
+		RunJobs(dictionary);
+		
 		System.exit(result);
-	}	
+	}
+	
+	
+	public static JobConfig[] createJobsDic(Configuration conf, String input, String folder, int numJobs){
+		JobConfig[] dictionary = new JobConfig[numJobs];
+		//change tool here!
+		dictionary[0]  = new JobConfig(conf,new WordCount(), input, folder + "/" + java.util.UUID.randomUUID().toString());
+		for (int i = 1; i < numJobs; i++){
+			dictionary[i] = new JobConfig(conf,new WordCount(), dictionary[i-1].args[1], folder + "/" + java.util.UUID.randomUUID().toString());
+		}
+		return dictionary;
+	}
+	
+	public static void RunJobs(JobConfig[] dictionary) throws Exception{
+		log.info("Start " + dictionary.length + " jobs!");
+		for (int i = 0; i < dictionary.length; i++){
+			int runResult = ToolRunner.run(dictionary[i].conf, dictionary[i].tool, dictionary[i].args);
+			if (runResult == 1){
+				log.info("Job " + i + "-th Re-run once!");
+				dictionary[i].args[1] = java.util.UUID.randomUUID().toString();
+				runResult = ToolRunner.run(dictionary[i].conf, dictionary[i].tool, dictionary[i].args);
+			}
+			if (runResult == 1){
+				log.info("Job " + i + "-th Re-run twice!");
+				dictionary[i].args[1] = java.util.UUID.randomUUID().toString();
+				runResult = ToolRunner.run(dictionary[i].conf, dictionary[i].tool, dictionary[i].args);
+			}
+			if (runResult == 1){
+				log.info("Job " + i + "-th Failed!");
+				break;
+			} else {
+				// Update input of next job, since the current job failed!
+				if (i + 1 < dictionary.length)
+					dictionary[i + 1].args[0] = dictionary[i].args[1];
+			}
+		}
+	}
+	
+	public static void distributeFiles(String input) throws IOException{
+		Configuration conf = new Configuration();
+		FileSystem fs = FileSystem.getLocal(conf);
+		Path path = new Path(input);
+		OutputSplitDir outmod = new OutputSplitDir(path,conf,fs);
+		outmod.execute();
+	}
+	
+	private static class JobConfig{
+		Configuration conf;
+		String[] args = null;
+		Tool tool;
+		public JobConfig(Configuration conf1,Tool tool1, String input1, String output1){
+			conf = conf1;
+			tool = tool1;
+			args = new String[2];
+			args[0] = input1;
+			args[1] = output1;
+		}
+	}
+	
+	private static int[] parseJobSetup(Path jobFile) {
+		int[] result = new int[2];
+		DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+		try {
+			DocumentBuilder db = dbf.newDocumentBuilder();
+			Document doc = db.parse(jobFile.toString());
+			Element configElement = doc.getDocumentElement();
+			NodeList nodes = configElement.getElementsByTagName("property");
+			if(nodes != null && nodes.getLength() > 0) {
+				for(int i = 0; i < nodes.getLength(); i++) {
+					Element property = (Element)nodes.item(i);
+					String elName = xmlGetSingleValue(property,"name");
+					if(elName == "example.count") {
+						result[0] = Integer.parseInt(xmlGetSingleValue(property,"value"));
+					} else if(elName == "batch.size") {
+						result[1] = Integer.parseInt(xmlGetSingleValue(property,"value"));
+					}
+				}
+			}
+			
+		} catch (ParserConfigurationException pce) {
+			System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(pce));
+			return null;
+		} catch(SAXException se) {
+			System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(se));
+			return null;
+		}catch(IOException ioe) {
+			System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(ioe));
+			return null;
+		}
+		return result;
+	}
+	
+	private static String xmlGetSingleValue(Element el, String tag) {
+		return ((Element)el.getElementsByTagName(tag).item(0)).getFirstChild().getNodeValue();
+	}
 }
