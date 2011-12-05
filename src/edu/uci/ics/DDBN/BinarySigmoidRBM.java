@@ -31,8 +31,6 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
-
-
 public class BinarySigmoidRBM extends Configured implements Tool {
 	public static class BatchFormat extends FileInputFormat<Text,jBLASArrayWritable> {
 
@@ -98,13 +96,16 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 	}
 	
 	public static class GibbsSampling extends Mapper<Text, jBLASArrayWritable, Text, jBLASArrayWritable> {
-		private DoubleMatrix weights,hbias,vbias;
-		private List<DoubleMatrix> hidden_state,v_data;
-		private DoubleMatrix v1_data,h1_data;
-		private DoubleMatrix w1,hb1,vb1;
+		private DoubleMatrix weights,hbias,hiddenChain;
+		private DoubleMatrix vbias,label,v_data;
+		private DoubleMatrix h1_data;
+		private DoubleMatrix v1_data;
+		private DoubleMatrix w1,hb1;
+		private DoubleMatrix vb1;
 		
 		private int gibbsSteps = 1;
 		private double learningRate = 0.1;
+		private int layers = 1;
 		
 		@Override
 		public void setup(GibbsSampling.Context context) {
@@ -141,6 +142,8 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 							this.gibbsSteps = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						} else if(elName.compareToIgnoreCase("learning.rate") == 0) {
 							this.learningRate = Double.parseDouble(xmlGetSingleValue(property,"value"));
+						} else if(elName.compareToIgnoreCase("layer.count") == 0) {
+							this.layers = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						}
 					}
 				}
@@ -153,48 +156,55 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 				System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(ioe));
 			}
 		}
-		
+		//TODO: DOUBLECHECK EVERYTHING
 		@Override
 		public void map(Text key,
 				jBLASArrayWritable input,
 				GibbsSampling.Context context) throws IOException, InterruptedException {
+			/* *******************************************************************/
+			/* initialize all memory we're going to use during the process		 */
+			
 			ArrayList<DoubleMatrix> data = input.getData();
 			weights = data.get(0);
 			hbias = data.get(1);
-			vbias = data.get(2);
+			hiddenChain = data.get(2);
+			vbias = data.get(3);
+			label = data.get(4);
+			v_data = data.get(5);
 			
 			w1 = DoubleMatrix.zeros(weights.rows,weights.columns);
 			hb1 = DoubleMatrix.zeros(hbias.rows,hbias.columns);
 			vb1 = DoubleMatrix.zeros(vbias.rows,vbias.columns);
 			
-			int N = (data.size()-3)/2;
+			DoubleMatrix mean_positive_phase = new DoubleMatrix(v_data.rows,hbias.columns);
+						
+			/* ********************************************************************/
+			// sample hidden state to get positive phase
+			// if empty, use it as the start of the chain
+			// or use persistent hidden state from pCD		
 			
-			hidden_state = data.subList(3,3+N);
-			v_data = data.subList(3+N,3+2*N);
+			DoubleMatrix phaseSample = sample_h_from_v(v_data,mean_positive_phase);
 			
-			for(int i = 0; i < N; i++) {
-				//sample hidden state if empty or use current hidden state
-								
-				if(hidden_state == null) {
-					hidden_state = new ArrayList<DoubleMatrix>(v_data.size());
-					h1_data = sample_h_from_v(v_data.get(i));
-				}
-				else {
-					h1_data = hidden_state.get(i);
-				}
-				for(int j = 0; j < gibbsSteps; j++) {
-					v1_data = sample_v_from_h(h1_data);
-					h1_data = sample_h_from_v(v1_data);
-				}
-				hidden_state.set(i, h1_data);
-				weight_contribution(hidden_state.get(i),v_data.get(i),h1_data,v1_data);
+			if(hiddenChain == null) {
+				hiddenChain = new DoubleMatrix(hbias.rows,hbias.columns);
+				h1_data.copy(phaseSample);
 			}
-			data.set(0, w1);
-			data.set(1,hb1);
-			data.set(2,vb1);
-			for(int i = 0; i < hidden_state.size(); i++) {
-				data.set(3+i,hidden_state.get(i));
+			else {
+				h1_data.copy(hiddenChain);
+			}				
+			// run Gibbs chain for k steps
+			for(int j = 0; j < gibbsSteps; j++) {
+				v1_data.copy(sample_v_from_h(h1_data));
+				h1_data.copy(sample_h_from_v(v1_data));
 			}
+			weight_contribution(hiddenChain,v_data,	h1_data,v1_data);
+			hiddenChain.copy(h1_data);
+			
+			data.get(0).copy(w1);
+			data.get(1).copy(hb1);
+			data.get(2).copy(hiddenChain);
+			data.get(3).copy(vb1);
+			
 			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(data);
 			context.write(key, outputmatrix);
 		}
@@ -203,8 +213,15 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			return matrixBinomial(propup(v0));
 		}
 		
+		public DoubleMatrix sample_h_from_v(DoubleMatrix v0, DoubleMatrix phase) {
+			DoubleMatrix activations = propup(v0);
+			phase.copy(activations);
+			return matrixBinomial(activations);
+		}
+		
 		public DoubleMatrix propup(DoubleMatrix v) {
-			return sigmoid(v.mul(weights).add(hbias));
+			return sigmoid(this.weights.mul(v.transpose()).transpose()
+						.add(hbias.repmat(v_data.rows, 1)));
 		}
 		
 		public DoubleMatrix sample_v_from_h(DoubleMatrix h0) {
@@ -212,10 +229,11 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		}
 		
 		public DoubleMatrix propdown(DoubleMatrix h) {
-			return sigmoid(h.mul(weights.transpose()).add(vbias));
+			return sigmoid(h.mul(weights).add(vbias.repmat(20,1)));
 		}
 				
 		public DoubleMatrix sigmoid(DoubleMatrix exponent) {
+			
 			int rows = exponent.rows, cols = exponent.columns;
 			double[][] p_y_given_x = new double[rows][cols];
 			for(int i = 0; i < rows; i++) {
@@ -237,12 +255,15 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			return new DoubleMatrix(result);
 		}
 						
-		public void weight_contribution(DoubleMatrix h0,DoubleMatrix v0,DoubleMatrix h1,DoubleMatrix v1) {
-			this.w1.add(v0.transpose().mul(h0).sub(v1.transpose().mul(h1)).mul(learningRate));
-			this.vb1.add(v0.sub(v1).mul(learningRate));
-			this.hb1.add(h0.sub(h1).mul(learningRate));
+		public void weight_contribution(DoubleMatrix h0,DoubleMatrix v0,
+				DoubleMatrix h1,DoubleMatrix v1) {
+			this.w1.add(h0.transpose().mul(v0).sub(h1.transpose().mul(v1)).mul(learningRate));
+			this.vb1.add(v0.sub(v1).mul(learningRate)).columnMeans();
+			this.hb1.add(h0.sub(h1).mul(learningRate)).columnMeans();
 		}
 	}
+	
+	//TODO: FIX REDUCER
 	public static class WeightContributions extends Reducer<Text, jBLASArrayWritable, Text, jBLASArrayWritable> {
 
 		@Override
