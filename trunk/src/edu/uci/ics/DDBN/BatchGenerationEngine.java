@@ -2,9 +2,11 @@
 
 package edu.uci.ics.DDBN;
 
+//base java libraries
 import java.io.*;
 import java.util.*;
 
+//xml libraries
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -12,13 +14,13 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
-
+//exterior libraries
 import org.apache.log4j.Logger;
 import org.jblas.DoubleMatrix;
+//hadoop libraries
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.*;
 import org.apache.hadoop.mapreduce.InputSplit;
@@ -135,8 +137,9 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		private Text batchID = new Text();
 		private jBLASArrayWritable dataArray;
 		
+		private int layers = 1;
 		private int visibleNodes = 28*28;
-		private int hiddenNodes = 500;
+		private ArrayList<Integer> hiddenNodes = new ArrayList<Integer>();
 		private int exampleCount = 60000;
 		private int batchSize = 20;
 		
@@ -175,12 +178,14 @@ public class BatchGenerationEngine extends Configured implements Tool {
 						String elName = xmlGetSingleValue(property,"name");
 						if(elName.compareToIgnoreCase("visible.nodes") == 0) {
 							this.visibleNodes = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName.compareToIgnoreCase("hidden.nodes") == 0) {
-							this.hiddenNodes = Integer.parseInt(xmlGetSingleValue(property,"value"));
+						} else if(elName.substring(0, 13).compareToIgnoreCase("hidden.nodes") == 0) {
+							this.hiddenNodes.add(Integer.parseInt(xmlGetSingleValue(property,"value")));
 						} else if(elName.compareToIgnoreCase("example.count") == 0) {
 							this.exampleCount = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						} else if(elName.compareToIgnoreCase("batch.size") == 0) {
 							this.batchSize = Integer.parseInt(xmlGetSingleValue(property,"value"));
+						} else if(elName.compareToIgnoreCase("layer.count") == 0) {
+							this.layers = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						}
 					}
 				}
@@ -199,22 +204,20 @@ public class BatchGenerationEngine extends Configured implements Tool {
 				Minibatcher.Context context) throws IOException, InterruptedException {
 			
 			int totalBatchCount = exampleCount/batchSize;
-			Iterator<jBLASArrayWritable> dataIter = data.iterator();			
+			Iterator<jBLASArrayWritable> dataIter = data.iterator();
 			
-			DoubleMatrix weights = DoubleMatrix.randn(hiddenNodes,visibleNodes);
-			DoubleMatrix hbias = DoubleMatrix.zeros(hiddenNodes);
-			DoubleMatrix vbias = DoubleMatrix.zeros(visibleNodes);
-			DoubleMatrix label = DoubleMatrix.zeros(batchSize);
-			DoubleMatrix hidden_chain = null;
-			DoubleMatrix vdata = DoubleMatrix.zeros(batchSize,visibleNodes);
+			DoubleMatrix weights = DoubleMatrix.randn(hiddenNodes.get(0),visibleNodes);
+			DoubleMatrix hbias = DoubleMatrix.zeros(1,hiddenNodes.get(0));
+			DoubleMatrix vbias = DoubleMatrix.zeros(1,visibleNodes);
+			DoubleMatrix label = DoubleMatrix.zeros(batchSize,1);
+			DoubleMatrix hiddenChain = null;
 			
 			ArrayList<DoubleMatrix> outputmatricies = new ArrayList<DoubleMatrix>();
 			outputmatricies.add(weights);
 			outputmatricies.add(hbias);
+			outputmatricies.add(hiddenChain);
 			outputmatricies.add(vbias);
 			outputmatricies.add(label);
-			outputmatricies.add(vdata);
-			outputmatricies.add(hidden_chain);
 			
 			int j;
 			for(int i = 1; i <= totalBatchCount; i++) {
@@ -222,6 +225,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 					break;
 				}
 				j = 0;
+				DoubleMatrix vdata = DoubleMatrix.zeros(batchSize,visibleNodes);
 				while(dataIter.hasNext() && j < batchSize ) {
 					jBLASArrayWritable imageStore = dataIter.next();
 					ArrayList<DoubleMatrix> list = imageStore.getData();
@@ -229,10 +233,10 @@ public class BatchGenerationEngine extends Configured implements Tool {
 					label.put(j,list.get(1).get(0));
 					j++;
 				}
+				outputmatricies.add(vdata);
 				batchID.set(i+"");
 				dataArray = new jBLASArrayWritable(cloneList(outputmatricies));
 				context.write(batchID, dataArray);
-				//log.info("Finished batch " + i);
 			}
 		}
 		
@@ -285,12 +289,10 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		Configuration conf = new Configuration();
 		String[] inputArgs = new GenericOptionsParser(conf,args).getRemainingArgs();
 		
-		Path xmlPath = null;
 		List<String> other_args = new ArrayList<String>();
 		for(int i = 0; i < args.length; ++i) {
 			if("-setup".equals(inputArgs[i])) {
-				xmlPath = new Path(inputArgs[++i]);
-				DistributedCache.addCacheFile(xmlPath.toUri(),conf);
+				DistributedCache.addCacheFile(new Path(inputArgs[++i]).toUri(),conf);
 				conf.setBoolean("minibatch.job.setup",true);
 			} else {
 				other_args.add(inputArgs[i]);
@@ -300,114 +302,8 @@ public class BatchGenerationEngine extends Configured implements Tool {
 		String[] tool_args = other_args.toArray(new String[0]);
 		int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
 		
-		log.info("distribute into different batch...");
-		distributeFiles(tool_args[1]);
-		
-		log.info("create Jobs...");
-		// get example count and size from xml file
-		// count = count_size[0];
-		// size = count_size[1];
-		int[] count_size = parseJobSetup(xmlPath);
-		int numJobs = 2;//count_size[1];
-		JobConfig[] dictionary = createJobsDic(conf, tool_args[1]+"/1",tool_args[1], numJobs);
-		
-		log.info("Run Sequence Jobs...");
-		RunJobs(dictionary);
-		
+		//distribute into different batch
+				
 		System.exit(result);
-	}
-	
-	
-	public static JobConfig[] createJobsDic(Configuration conf, String input, String folder, int numJobs){
-		JobConfig[] dictionary = new JobConfig[numJobs];
-		//change tool here!
-		dictionary[0]  = new JobConfig(conf,new WordCount(), input, folder + "/" + java.util.UUID.randomUUID().toString());
-		for (int i = 1; i < numJobs; i++){
-			dictionary[i] = new JobConfig(conf,new WordCount(), dictionary[i-1].args[1], folder + "/" + java.util.UUID.randomUUID().toString());
-		}
-		return dictionary;
-	}
-	
-	public static void RunJobs(JobConfig[] dictionary) throws Exception{
-		log.info("Start " + dictionary.length + " jobs!");
-		for (int i = 0; i < dictionary.length; i++){
-			int runResult = ToolRunner.run(dictionary[i].conf, dictionary[i].tool, dictionary[i].args);
-			if (runResult == 1){
-				log.info("Job " + i + "-th Re-run once!");
-				dictionary[i].args[1] = java.util.UUID.randomUUID().toString();
-				runResult = ToolRunner.run(dictionary[i].conf, dictionary[i].tool, dictionary[i].args);
-			}
-			if (runResult == 1){
-				log.info("Job " + i + "-th Re-run twice!");
-				dictionary[i].args[1] = java.util.UUID.randomUUID().toString();
-				runResult = ToolRunner.run(dictionary[i].conf, dictionary[i].tool, dictionary[i].args);
-			}
-			if (runResult == 1){
-				log.info("Job " + i + "-th Failed!");
-				break;
-			} else {
-				// Update input of next job, since the current job failed!
-				if (i + 1 < dictionary.length)
-					dictionary[i + 1].args[0] = dictionary[i].args[1];
-			}
-		}
-	}
-	
-	public static void distributeFiles(String input) throws IOException{
-		Configuration conf = new Configuration();
-		FileSystem fs = FileSystem.getLocal(conf);
-		Path path = new Path(input);
-		OutputSplitDir outmod = new OutputSplitDir(path,conf,fs);
-		outmod.execute();
-	}
-	
-	private static class JobConfig{
-		Configuration conf;
-		String[] args = null;
-		Tool tool;
-		public JobConfig(Configuration conf1,Tool tool1, String input1, String output1){
-			conf = conf1;
-			tool = tool1;
-			args = new String[2];
-			args[0] = input1;
-			args[1] = output1;
-		}
-	}
-	
-	private static int[] parseJobSetup(Path jobFile) {
-		int[] result = new int[2];
-		DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-		try {
-			DocumentBuilder db = dbf.newDocumentBuilder();
-			Document doc = db.parse(jobFile.toString());
-			Element configElement = doc.getDocumentElement();
-			NodeList nodes = configElement.getElementsByTagName("property");
-			if(nodes != null && nodes.getLength() > 0) {
-				for(int i = 0; i < nodes.getLength(); i++) {
-					Element property = (Element)nodes.item(i);
-					String elName = xmlGetSingleValue(property,"name");
-					if(elName == "example.count") {
-						result[0] = Integer.parseInt(xmlGetSingleValue(property,"value"));
-					} else if(elName == "batch.size") {
-						result[1] = Integer.parseInt(xmlGetSingleValue(property,"value"));
-					}
-				}
-			}
-			
-		} catch (ParserConfigurationException pce) {
-			System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(pce));
-			return null;
-		} catch(SAXException se) {
-			System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(se));
-			return null;
-		}catch(IOException ioe) {
-			System.err.println("Caught exception while parsing the cached file '" + jobFile + "' : " + StringUtils.stringifyException(ioe));
-			return null;
-		}
-		return result;
-	}
-	
-	private static String xmlGetSingleValue(Element el, String tag) {
-		return ((Element)el.getElementsByTagName(tag).item(0)).getFirstChild().getNodeValue();
-	}
+	}	
 }
