@@ -28,13 +28,14 @@ public class jBLASArrayWritable implements Writable {
 	
 	@SuppressWarnings("unchecked")
 	public void set(ArrayList<DoubleMatrix> mlist) {
+		this.mlist = new ArrayList<DoubleMatrix>();
 		this.mlist = (ArrayList<DoubleMatrix>) mlist.clone();
 	}
 	
 	@Override
 	public void readFields(DataInput in) throws IOException {
 		int size = in.readInt();
-		mlist.ensureCapacity(size);
+		mlist = new ArrayList<DoubleMatrix>(size);
 		for(int i = 0; i < size; i++) {
 			mlist.add(readMatrix(in));
 		}
