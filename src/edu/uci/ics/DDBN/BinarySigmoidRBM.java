@@ -25,13 +25,18 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.SequenceFileRecordReader;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.*;
+import org.apache.log4j.Logger;
 import org.jblas.DoubleMatrix;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
+import edu.uci.ics.DDBN.BatchGenerationEngine.BatchOutputFormat;
+
 public class BinarySigmoidRBM extends Configured implements Tool {
+	static Logger log = Logger.getLogger(BinarySigmoidRBM.class);
+	
 	public static class BatchFormat extends FileInputFormat<Text,jBLASArrayWritable> {
 
 		@Override
@@ -42,7 +47,6 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			br.initialize(split,context);
 			return br;
 		}
-		
 	}
 	
 	public static class BatchReader extends RecordReader<Text,jBLASArrayWritable> {
@@ -77,6 +81,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			reader = new SequenceFileRecordReader<Text,jBLASArrayWritable>();
 			key = new Text();
 			value = new jBLASArrayWritable();
+			
 			reader.initialize(split, context);
 		}
 
@@ -105,7 +110,8 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		
 		private int gibbsSteps = 1;
 		private double learningRate = 0.1;
-		private int layers = 1;
+		private double weightCost = 0.0002;
+		private int classCount = 10;
 		
 		@Override
 		public void setup(GibbsSampling.Context context) {
@@ -142,8 +148,10 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 							this.gibbsSteps = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						} else if(elName.compareToIgnoreCase("learning.rate") == 0) {
 							this.learningRate = Double.parseDouble(xmlGetSingleValue(property,"value"));
-						} else if(elName.compareToIgnoreCase("layer.count") == 0) {
-							this.layers = Integer.parseInt(xmlGetSingleValue(property,"value"));
+						} else if(elName.compareToIgnoreCase("weight.cost") == 0) {
+							this.weightCost = Double.parseDouble(xmlGetSingleValue(property,"value"));
+						} else if(elName.compareToIgnoreCase("class.count") == 0) {
+							this.classCount = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						}
 					}
 				}
@@ -163,30 +171,62 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 				GibbsSampling.Context context) throws IOException, InterruptedException {
 			/* *******************************************************************/
 			/* initialize all memory we're going to use during the process		 */
-			
+			long start_time = System.nanoTime();
 			ArrayList<DoubleMatrix> data = input.getData();
+			label = data.get(4);
+			v_data = data.get(5);
+			
+			//check to see if we are in the first layer or there are layers beneath us we must sample from
+			if(data.size() > 6) {
+				int prelayer = (data.size()-6)/4;			
+				DoubleMatrix[] preWeights = new DoubleMatrix[prelayer],
+					preHbias = new DoubleMatrix[prelayer],
+					preVbias = new DoubleMatrix[prelayer];
+				for(int i = 0; i < prelayer; i++ ) {
+					preWeights[i] = data.get(6+i*3);
+					preHbias[i] = data.get(7+i*3);
+					preVbias[i] = data.get(8+i*3);
+				}
+				DoubleMatrix vnew = null;
+				for(int i = 0; i < prelayer; i++) {
+					weights = preWeights[i];
+					vbias = preVbias[i];
+					hbias = preHbias[i];
+					vnew = sample_h_from_v(i==0 ? v_data : vnew);
+				}
+				v_data = vnew;
+			}
+			
 			weights = data.get(0);
 			hbias = data.get(1);
 			hiddenChain = data.get(2);
 			vbias = data.get(3);
-			label = data.get(4);
-			v_data = data.get(5);
+			
+			//check if we need to attach labels to the observed variables
+			if(vbias.columns != v_data.columns) {
+				DoubleMatrix labels = DoubleMatrix.zeros(1,classCount);
+				int labelNum = (new Double(label.get(0))).intValue();
+				labels.put(labelNum,1.0);
+				v_data = DoubleMatrix.concatHorizontally(v_data, labels);
+			}	
 			
 			w1 = DoubleMatrix.zeros(weights.rows,weights.columns);
 			hb1 = DoubleMatrix.zeros(hbias.rows,hbias.columns);
 			vb1 = DoubleMatrix.zeros(vbias.rows,vbias.columns);
-			
-			DoubleMatrix mean_positive_phase = new DoubleMatrix(v_data.rows,hbias.columns);
 						
 			/* ********************************************************************/
 			// sample hidden state to get positive phase
 			// if empty, use it as the start of the chain
 			// or use persistent hidden state from pCD		
 			
-			DoubleMatrix phaseSample = sample_h_from_v(v_data,mean_positive_phase);
+			DoubleMatrix phaseSample = sample_h_from_v(v_data);
+			h1_data = new DoubleMatrix();			
+			v1_data = new DoubleMatrix();
 			
 			if(hiddenChain == null) {
-				hiddenChain = new DoubleMatrix(hbias.rows,hbias.columns);
+				data.set(2, new DoubleMatrix(hbias.rows,hbias.columns));
+				hiddenChain = data.get(2);
+				hiddenChain.copy(phaseSample);
 				h1_data.copy(phaseSample);
 			}
 			else {
@@ -197,7 +237,8 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 				v1_data.copy(sample_v_from_h(h1_data));
 				h1_data.copy(sample_h_from_v(v1_data));
 			}
-			weight_contribution(hiddenChain,v_data,	h1_data,v1_data);
+			DoubleMatrix hprob = propup(v1_data);
+			weight_contribution(hiddenChain,v_data,	hprob,v1_data);
 			hiddenChain.copy(h1_data);
 			
 			data.get(0).copy(w1);
@@ -207,6 +248,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			
 			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(data);
 			context.write(key, outputmatrix);
+			log.info("Job completed in: " + (System.nanoTime()-start_time)/(1E6) + " ms");
 		}
 		
 		public DoubleMatrix sample_h_from_v(DoubleMatrix v0) {
@@ -220,8 +262,8 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		}
 		
 		public DoubleMatrix propup(DoubleMatrix v) {
-			return sigmoid(this.weights.mul(v.transpose()).transpose()
-						.add(hbias.repmat(v_data.rows, 1)));
+			return sigmoid(this.weights.mmul(v.transpose()).transpose()
+						.addi(hbias.repmat(v_data.rows, 1)));
 		}
 		
 		public DoubleMatrix sample_v_from_h(DoubleMatrix h0) {
@@ -229,37 +271,81 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		}
 		
 		public DoubleMatrix propdown(DoubleMatrix h) {
-			return sigmoid(h.mul(weights).add(vbias.repmat(20,1)));
+			return sigmoid(h.mmul(this.weights)
+					.addi(vbias.repmat(v_data.rows,1)));
 		}
 				
 		public DoubleMatrix sigmoid(DoubleMatrix exponent) {
 			
 			int rows = exponent.rows, cols = exponent.columns;
-			double[][] p_y_given_x = new double[rows][cols];
 			for(int i = 0; i < rows; i++) {
 				for (int j = 0; j < cols; j++) {
-					p_y_given_x[i][j] = 1.0 / (1.0 + Math.exp(exponent.get(i, j)));
+					exponent.put(i,j, 1.0 / (1.0 + Math.exp(exponent.get(i, j)*-1.0)));
 				}
 			}			
-			return new DoubleMatrix(p_y_given_x);
+			return exponent;
+		}
+		
+		public DoubleMatrix matrixExponential(DoubleMatrix exponent) {
+			int rows = exponent.rows, cols = exponent.columns;
+			for(int i = 0; i < rows; i++) {
+				for(int j = 0; j < cols; j++) {
+					exponent.put(i,j, Math.exp(exponent.get(i,j)));
+				}
+			}
+			return exponent;
+		}
+		
+		public DoubleMatrix matrixLogarithm(DoubleMatrix logponent) {
+			int rows = logponent.rows, cols = logponent.columns;
+			for(int i = 0; i < rows; i++) {
+				for(int j = 0; j < cols; j++) {
+					logponent.put(i,j, Math.log(logponent.get(i,j)));
+				}
+			}
+			return logponent;
 		}
 		
 		public DoubleMatrix matrixBinomial(DoubleMatrix p) {
 			int rows = p.rows, cols = p.columns;
-			double[][] result = new double[rows][cols];
 			for(int i = 0; i < rows; i++) {
 				for (int j = 0; j < cols; j++) {
-					result[i][j] = Math.random() < p.get(i,j) ? 1.0 : 0.0;
+					p.put(i,j, Math.random() < p.get(i,j) ? 1.0 : 0.0);
 				}
 			}	
-			return new DoubleMatrix(result);
+			return p;
+		}
+		
+		public DoubleMatrix matrixSum(DoubleMatrix summant, int axis ) {
+			int rows = axis==0 ? summant.rows : 1, cols = axis==0 ? 1 : summant.columns;
+			DoubleMatrix sum = new DoubleMatrix(rows,cols);
+			if(axis == 0) {
+				for(int i = 0; i < summant.columns; i++) {
+					sum.put(1,i, summant.getColumn(i).sum());
+				}
+			} else {
+				for(int i = 0; i < summant.rows; i++) {
+					sum.put(i,1, summant.getRow(i).sum());
+				}
+			}
+			return sum;
 		}
 						
 		public void weight_contribution(DoubleMatrix h0,DoubleMatrix v0,
 				DoubleMatrix h1,DoubleMatrix v1) {
-			this.w1.add(h0.transpose().mul(v0).sub(h1.transpose().mul(v1)).mul(learningRate));
-			this.vb1.add(v0.sub(v1).mul(learningRate)).columnMeans();
-			this.hb1.add(h0.sub(h1).mul(learningRate)).columnMeans();
+			this.w1.addi(h0.transpose().mmul(v0)
+					.subi(h1.transpose().mmul(v1)))
+					.muli(learningRate/v_data.rows).subi(weights.mul(weightCost));
+			
+			this.vb1.addi(v0.sub(v1).muli(learningRate/v_data.rows).columnMeans());
+			this.hb1.addi(h0.sub(h1).muli(learningRate/v_data.rows).columnMeans());
+		}
+		
+		public DoubleMatrix free_energy(DoubleMatrix v_sample) {
+			DoubleMatrix wv_hb = weights.mmul(v_sample.transpose()).addi(this.hbias.repmat(v_sample.rows,1).transpose());
+			DoubleMatrix vb = v_sample.mmul(this.vbias.transpose());
+			DoubleMatrix hi = matrixSum(matrixLogarithm(matrixExponential(wv_hb).addi(1.0)),1);
+			return hi.mul(-1.0).subi(vb);
 		}
 	}
 	
@@ -270,29 +356,46 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		public void reduce(Text key,
 				Iterable<jBLASArrayWritable> inputs,
 				WeightContributions.Context context) throws IOException, InterruptedException {
-			DoubleMatrix weights = null,hbias = null,vbias = null;
+			DoubleMatrix w_cont = new DoubleMatrix(),
+				hb_cont = new DoubleMatrix(),
+				vb_cont = new DoubleMatrix(),
+				weights = null,
+				hbias = null,
+				vbias = null;
+			
+			ArrayList<DoubleMatrix> chainList = new ArrayList<DoubleMatrix>();
 			
 			ArrayList<DoubleMatrix> output_array = new ArrayList<DoubleMatrix>();
-			output_array.add(weights);
-			output_array.add(hbias);
-			output_array.add(vbias);
+			
+			int count = 0;
 			
 			for(jBLASArrayWritable input : inputs) {
 				ArrayList<DoubleMatrix> data = input.getData();
-				DoubleMatrix w_cont = data.get(0);
-				DoubleMatrix hb_cont = data.get(1);
-				DoubleMatrix vb_cont = data.get(2);
+				w_cont.copy(data.get(0));
+				hb_cont.copy(data.get(1));
+				vb_cont.copy(data.get(3));
+				
+				//save list of all hidden chains for updates to batch files in phase 3
+				chainList.add(new DoubleMatrix(data.get(2).toArray2()));
 				
 				if(weights == null) {
 					weights = DoubleMatrix.zeros(w_cont.rows,w_cont.columns);
 					hbias = DoubleMatrix.zeros(hb_cont.rows,hb_cont.columns);
 					vbias = DoubleMatrix.zeros(vb_cont.rows,vb_cont.columns);
 				}
-				weights.add(w_cont);
-				hbias.add(hb_cont);
-				vbias.add(vb_cont);
-				output_array.add(data.get(3));
+				
+				//sum weight contributions
+				weights.addi(w_cont);
+				hbias.addi(hb_cont);
+				vbias.addi(vb_cont);
+				count++;
 			}
+			
+			output_array.add(weights.div(count));
+			output_array.add(hbias.div(count));
+			output_array.add(vbias.div(count));
+			output_array.addAll(chainList);			
+			
 			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(output_array);
 			context.write(key,outputmatrix);
 		}
@@ -316,6 +419,8 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		job.setReducerClass(WeightContributions.class);
 		
 		job.setNumReduceTasks(1);
+		
+		job.setOutputFormatClass(BatchOutputFormat.class);
 				
 		FileInputFormat.setInputPaths(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
@@ -324,7 +429,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 	}
 	
 	public static void main(String[] args) throws Exception{
-		System.out.println("Beginning job...");
+		log.info("Beginning job...");
 		Configuration conf = new Configuration();
 		String[] inputArgs = new GenericOptionsParser(conf,args).getRemainingArgs();
 		
@@ -332,7 +437,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		for(int i = 0; i < args.length; ++i) {
 			if("-setup".equals(inputArgs[i])) {
 				DistributedCache.addCacheFile(new Path(inputArgs[++i]).toUri(),conf);
-				conf.setBoolean("rbmstep.job.setup",true);
+				conf.setBoolean("minibatch.job.setup",true);
 			} else {
 				other_args.add(inputArgs[i]);
 			}
