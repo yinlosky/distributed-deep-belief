@@ -1,23 +1,62 @@
 <?xml version="1.0"?>
-<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<?xml-stylesheet type="text/xsl" href="/home/hadoop/hadoop/conf/configuration.xsl"?>
 
 <!-- Put site-specific property overrides in this file. -->
 
 <configuration>
  <property>
-  <name>visible.nodes</name>
-  <value>784</value>
+  <name>layer.count</name>
+  <value>3</value>
+  <description>Layers of the belief network</description>
  </property>
  <property>
-  <name>hidden.nodes</name>
-  <value>500</name>
+  <name>visible.nodes</name>
+  <value>784</value>
+  <description>The size of the input vector</description>
+ </property>
+ <property>
+  <name>hidden.nodes.1</name>
+  <value>500</value>
+  <description>The number of hidden nodes representing the connections : layer 1</description>
+ </property>
+ <property>
+  <name>hidden.nodes.2</name>
+  <value>500</value>
+  <description>The number of hidden nodes representing the connections : layer 2</description>
+ </property>
+ <property>
+  <name>hidden.nodes.3</name>
+  <value>1000</value>
+  <description>The number of hidden nodes representing the connections : layer 3</description>
+ </property>
+ <property>
+  <name>class.count</name>
+  <value>10</value>
+  <description>Number of classes to identify</description>
  </property>
  <property>
   <name>example.count</name>
   <value>60000</value>
+  <description>Examples in this dataset</description>
+ </property>
+ <property>
+  <name>test.count</name>
+  <value>10000</value>
+  <description>Examples in the test dataset</description>
  </property>
  <property>
   <name>batch.size</name>
-  <value>20</value>
+  <value>40</value>
+  <description>Batch size of the dataset. If unset, use (example.count)^(1/3)</description>
+ </property>
+ <property>
+  <name>gibbs.steps</name>
+  <value>10</value>
+  <description>Number of steps in the Gibbs chain to walk during pCD</description>
+ </property>
+ <property>
+  <name>learning.rate</name>
+  <value>0.1</value>
+  <description>Rate at which gradient is updated</description>
  </property>
 </configuration>
