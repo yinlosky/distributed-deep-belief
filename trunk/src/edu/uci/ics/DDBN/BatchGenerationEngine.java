@@ -282,25 +282,44 @@ public class BatchGenerationEngine extends Configured implements Tool {
 	}
 	
 	public static void main(String[] args) throws Exception{
-		System.out.println("Beginning job...");
-		Configuration conf = new Configuration();
-		String[] inputArgs = new GenericOptionsParser(conf,args).getRemainingArgs();
-		
-		List<String> other_args = new ArrayList<String>();
-		for(int i = 0; i < args.length; ++i) {
-			if("-setup".equals(inputArgs[i])) {
-				DistributedCache.addCacheFile(new Path(inputArgs[++i]).toUri(),conf);
-				conf.setBoolean("minibatch.job.setup",true);
-			} else {
-				other_args.add(inputArgs[i]);
-			}
-		}
-		
-		String[] tool_args = other_args.toArray(new String[0]);
-		int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
-		
-		//distribute into different batch
-				
-		System.exit(result);
-	}	
+        System.out.println("Beginning job...");
+        Configuration conf = new Configuration();
+        String[] inputArgs = new GenericOptionsParser(conf,args).getRemainingArgs();
+        
+        Path xmlPath = null;
+        List<String> other_args = new ArrayList<String>();
+        for(int i = 0; i < args.length; ++i) {
+                if("-setup".equals(inputArgs[i])) {
+                        xmlPath = new Path(inputArgs[++i]);
+                        DistributedCache.addCacheFile(xmlPath.toUri(),conf);
+                        conf.setBoolean("minibatch.job.setup",true);
+                } else {
+                        other_args.add(inputArgs[i]);
+                }
+        }
+        
+        String[] tool_args = other_args.toArray(new String[0]);
+        int result = ToolRunner.run(conf, new BatchGenerationEngine(), tool_args);
+        
+        log.info("distribute into different batch...");
+        
+        JobsController.log = log;
+        JobsController.distributeFiles(tool_args[1]);
+        
+        log.info("create Jobs...");
+        // get example count and size from xml file
+        // count = count_size[0];
+        // size = count_size[1];
+        int[] count_size = JobsController.parseJobSetup(xmlPath);
+        int numJobs = count_size[1];
+        JobConfig[] dictionary = JobsController.createJobsDic(conf, tool_args[1]+"/1",tool_args[1], numJobs);
+        
+        log.info("Run Sequence Jobs...");
+        JobsController.RunJobs(dictionary);
+        
+        System.exit(result);
+}
+
+
+
 }
