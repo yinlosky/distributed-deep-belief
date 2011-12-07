@@ -136,8 +136,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 	public static class Minibatcher extends Reducer<IntWritable,jBLASArrayWritable,Text,jBLASArrayWritable> {
 		private Text batchID = new Text();
 		private jBLASArrayWritable dataArray;
-		
-		private int layers = 1;
 		private int visibleNodes = 28*28;
 		private ArrayList<Integer> hiddenNodes = new ArrayList<Integer>();
 		private int exampleCount = 60000;
@@ -178,14 +176,13 @@ public class BatchGenerationEngine extends Configured implements Tool {
 						String elName = xmlGetSingleValue(property,"name");
 						if(elName.compareToIgnoreCase("visible.nodes") == 0) {
 							this.visibleNodes = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName.substring(0, 13).compareToIgnoreCase("hidden.nodes") == 0) {
+						} else if(elName.length() > 12 &&
+								elName.substring(0, 12).compareToIgnoreCase("hidden.nodes") == 0) {
 							this.hiddenNodes.add(Integer.parseInt(xmlGetSingleValue(property,"value")));
 						} else if(elName.compareToIgnoreCase("example.count") == 0) {
 							this.exampleCount = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						} else if(elName.compareToIgnoreCase("batch.size") == 0) {
 							this.batchSize = Integer.parseInt(xmlGetSingleValue(property,"value"));
-						} else if(elName.compareToIgnoreCase("layer.count") == 0) {
-							this.layers = Integer.parseInt(xmlGetSingleValue(property,"value"));
 						}
 					}
 				}
@@ -210,6 +207,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			DoubleMatrix hbias = DoubleMatrix.zeros(1,hiddenNodes.get(0));
 			DoubleMatrix vbias = DoubleMatrix.zeros(1,visibleNodes);
 			DoubleMatrix label = DoubleMatrix.zeros(batchSize,1);
+			DoubleMatrix vdata = DoubleMatrix.zeros(batchSize,visibleNodes);
 			DoubleMatrix hiddenChain = null;
 			
 			ArrayList<DoubleMatrix> outputmatricies = new ArrayList<DoubleMatrix>();
@@ -218,6 +216,7 @@ public class BatchGenerationEngine extends Configured implements Tool {
 			outputmatricies.add(hiddenChain);
 			outputmatricies.add(vbias);
 			outputmatricies.add(label);
+			outputmatricies.add(vdata);
 			
 			int j;
 			for(int i = 1; i <= totalBatchCount; i++) {
@@ -225,7 +224,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 					break;
 				}
 				j = 0;
-				DoubleMatrix vdata = DoubleMatrix.zeros(batchSize,visibleNodes);
 				while(dataIter.hasNext() && j < batchSize ) {
 					jBLASArrayWritable imageStore = dataIter.next();
 					ArrayList<DoubleMatrix> list = imageStore.getData();
@@ -233,7 +231,6 @@ public class BatchGenerationEngine extends Configured implements Tool {
 					label.put(j,list.get(1).get(0));
 					j++;
 				}
-				outputmatricies.add(vdata);
 				batchID.set(i+"");
 				dataArray = new jBLASArrayWritable(cloneList(outputmatricies));
 				context.write(batchID, dataArray);

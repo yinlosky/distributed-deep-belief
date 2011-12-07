@@ -1,177 +1,88 @@
 package edu.uci.ics.DDBN;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.SequenceFile;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.jBLASArrayWritable;
 import org.jblas.DoubleMatrix;
 
-public class BatchWeightUpdate {
-	private FileSystem fs;
-	private Path updateDir;
-	private Path updateFile;
+public class BatchWeightUpdate extends BatchUpdater {
 	
-	public BatchWeightUpdate(Path updateDir, Path updateFile) throws IOException {
-		this(new Configuration(), updateDir, updateFile);
-	}
-	
-	public BatchWeightUpdate(Configuration conf, Path updateDir, Path updateFile) throws IOException {
-		this.setUpdateDir(updateDir);
-		this.setUpdateFile(updateFile);
-		this.setFs(FileSystem.get(conf));
-	}
-
-	public Configuration getConf() {
-		return fs.getConf();
-	}
-
-	public FileSystem getFs() {
-		return fs;
-	}
-
-	public void setFs(FileSystem fs) {
-		this.fs = fs;
-	}
-
-	public Path getUpdateDir() {
-		return updateDir;
-	}
-
-	public void setUpdateDir(Path path) {
-		this.updateDir = path;
+	public static void main(String[] args) throws IOException {
+		Configuration conf = new Configuration();
+		FileSystem fs = FileSystem.getLocal(conf);
+		Path updateTo = new Path(args[0]);
+		Path updateFrom = new Path(args[1]);
+		BatchWeightUpdate bwu = new BatchWeightUpdate(fs,updateTo, updateFrom);
+		bwu.update();
 	}
 	
-	public Path getUpdateFile() {
-		return updateFile;
-	}
-
-	public void setUpdateFile(Path path) {
-		this.updateFile = path;
+	public BatchWeightUpdate(Path updateTo, Path updateFrom)
+		throws IOException {
+		super(new Configuration(), updateTo, updateFrom);
 	}
 	
-	public boolean runUpdate() {
-		try {
-			DoubleMatrix[] updateMat = this.parseUpdateFile();
-			return updateBatch(updateMat);
-		} catch(IOException ioe) {
-			System.err.println("Couldn't read update file " + ioe.toString());
-			return false;
+	public BatchWeightUpdate(Configuration conf, 
+			Path updateTo, Path updateFrom) throws IOException {
+		super(conf,updateTo,updateFrom);
+	}
+	
+	public BatchWeightUpdate(FileSystem fs, Path updateTo, Path updateFrom) {
+		super(fs,updateTo,updateFrom);
+	}
+	
+	@Override
+	public void update() throws IOException {
+		if (!fs.exists(updateTo) || !fs.exists(updateFrom)) {
+			System.err.println(updateTo.toString() +
+					" <- " + updateFrom.toString() +
+					" : Not a valid update set");
+			return;
 		}
-	}
-	
-	private DoubleMatrix[] parseUpdateFile() throws IOException {
-		FSDataInputStream in = fs.open(this.getUpdateFile());
-		stripKey(in);
-		DoubleMatrix[] ret = readArrayMatrix(in);
-		in.close();
-		return ret;
-	}
-	
-	private boolean updateBatch(DoubleMatrix[] updateMat) {
-		try {
-			FileStatus[] listFiles = fs.listStatus(this.getUpdateDir());
-			for(FileStatus status : listFiles) {
-				Path fullName = status.getPath();
-				FSDataInputStream in = fs.open(fullName);
-				Path tempWriteFile = new Path(fullName.toString() +"-temp");
-				FSDataOutputStream out = fs.create(tempWriteFile);
-				try {
-					while(true) {
-						try{
-							stripKey(in,out);
-							DoubleMatrix[] matToUpdate = readArrayMatrix(in);
-							matToUpdate[0] = updateMat[0]; //weights
-							matToUpdate[1] = updateMat[1]; //hbias
-							matToUpdate[2] = updateMat[2]; //vbias
-							matToUpdate[5] = updateMat[3]; //hchain
-							writeArrayMatrix(matToUpdate, out);
-							out.writeChar('\n');
-						} catch(EOFException eof) {
-							break;
-						}
-					}
-					fs.delete(fullName);
-					fs.rename(tempWriteFile,fullName);
-				} finally {
-					in.close();
-					out.close();
-				}
-			}
-		} catch(IOException ioe) {
-			System.err.println("Error in reading/writing from directory: " + ioe.toString());
-			return false;
+		
+		SequenceFile.Reader reader_updateFrom = 
+			new SequenceFile.Reader(fs,updateFrom,conf);
+		SequenceFile.Reader reader_updateTo = 
+			new SequenceFile.Reader(fs,updateTo,conf);
+		Path writeLoc = new Path(updateTo.toString()+"-up");
+		fs.createNewFile(writeLoc);
+		SequenceFile.Writer writer = 
+			new SequenceFile.Writer(fs,conf,writeLoc,
+					Text.class,jBLASArrayWritable.class);
+		
+		DoubleMatrix newWeight, newHbias, newVbias;		
+		Text key = new Text();
+		jBLASArrayWritable value = new jBLASArrayWritable();
+		
+		reader_updateFrom.next(key, value);
+		ArrayList<DoubleMatrix> updateData = value.getData();
+		newWeight = updateData.get(0);
+		newHbias = updateData.get(1);
+		newVbias = updateData.get(2);
+		List<DoubleMatrix> hiddenChains = updateData.subList(3, updateData.size());
+		
+		reader_updateFrom.close();
+		int i = 0;
+		while(reader_updateTo.next(key,value)) {
+			updateData = value.getData();
+			updateData.get(0).copy(newWeight);
+			updateData.get(1).copy(newHbias);
+			if(updateData.get(2)==null) updateData.set(2,hiddenChains.get(i));
+			else updateData.get(2).copy(hiddenChains.get(i));
+			updateData.get(3).copy(newVbias);
+			writer.append(key, new jBLASArrayWritable(updateData));
+			i++;
 		}
-		return true;
-	}
-	
-	private void stripKey(FSDataInputStream in, FSDataOutputStream out) throws IOException, EOFException {
-		String key = in.readUTF();
-		out.writeUTF(key);
-		char[] lastchar = new char[1];
-		key.getChars(key.length()-1, key.length(), lastchar, 0);
-		if(lastchar[0] != '\t') {
-			//tab wasn't UTF, read a tab as ASCII
-			char tab = in.readChar();
-			out.writeChar(tab);
-		}
-	}
-	
-	private void stripKey(FSDataInputStream in) throws IOException, EOFException {
-		String key = in.readUTF();
-		char[] lastchar = new char[1];
-		key.getChars(key.length()-1, key.length(), lastchar, 0);
-		if(lastchar[0] != '\t') {
-			//tab wasn't UTF, read a tab as ASCII
-			char tab = in.readChar();
-		}
-	}
-	
-	private static DoubleMatrix[] readArrayMatrix(FSDataInputStream in) throws IOException {
-		int count = in.readInt();
-		System.out.println(count);
-		DoubleMatrix[] ret = new DoubleMatrix[count];
-		for(int i = 0; i < count; ++i) {
-			ret[i] = readMatrix(in);
-		}
-		return ret;
-	}
-	
-	private static DoubleMatrix readMatrix(FSDataInputStream in) throws IOException {
-		int rows,cols;
-		rows = in.readInt();
-		cols = in.readInt();
-		System.out.print(rows + " " + cols + "\n");
-		double[][] temp = new double[rows][cols];
-		for(int i = 0; i < rows; i++)
-			for(int j = 0; j < cols; j++)
-				temp[i][j] = in.readDouble();
-		return new DoubleMatrix(temp);
-	}
-	
-	private static void writeArrayMatrix(DoubleMatrix[] arrayMatrix, FSDataOutputStream out) throws IOException {
-		out.writeInt(arrayMatrix.length);
-		for(int i = 0; i < arrayMatrix.length; ++i) {
-			writeMatrix(arrayMatrix[i], out);
-		}
-	}
-	
-	private static void writeMatrix(DoubleMatrix mat, FSDataOutputStream out) throws IOException {
-		int rows = mat.getRows();
-		int cols = mat.getColumns();
-		out.writeInt(rows);
-		out.writeInt(cols);
-		for(int j = 0; j < rows; ++j) {
-			for(int k = 0; k < cols; ++k) {
-				out.writeDouble(mat.get(j,k));
-			}
-		}
-	}
+		reader_updateTo.close();
+		writer.close();
+		
+		fs.delete(updateTo,false);
+		fs.rename(writeLoc, updateTo);
+	}	
 }

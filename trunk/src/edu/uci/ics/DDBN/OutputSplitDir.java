@@ -28,7 +28,7 @@ public class OutputSplitDir {
 	public static void main(String[] args) throws IOException {
 		Configuration conf = new Configuration();
 		FileSystem fs = FileSystem.getLocal(conf);
-		Path path = new Path("/media/The_Universe/hadoop/tmp_hdfs/test");
+		Path path = new Path("/media/The_Universe/hadoop/tmp_hdfs/training");
 		OutputSplitDir outmod = new OutputSplitDir(path,conf,fs);
 		outmod.execute();
 	}
