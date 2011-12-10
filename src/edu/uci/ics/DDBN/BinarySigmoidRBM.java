@@ -1,14 +1,10 @@
 package edu.uci.ics.DDBN;
-
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
@@ -31,8 +27,8 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
-
 import edu.uci.ics.DDBN.BatchGenerationEngine.BatchOutputFormat;
+import edu.uci.ics.DDBN.MatrixMath;
 
 public class BinarySigmoidRBM extends Configured implements Tool {
 	static Logger log = Logger.getLogger(BinarySigmoidRBM.class);
@@ -178,10 +174,10 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			
 			//check to see if we are in the first layer or there are layers beneath us we must sample from
 			if(data.size() > 6) {
-				int prelayer = (data.size()-6)/4;			
+				int prelayer = (data.size()-6)/3;			
 				DoubleMatrix[] preWeights = new DoubleMatrix[prelayer],
-					preHbias = new DoubleMatrix[prelayer],
-					preVbias = new DoubleMatrix[prelayer];
+				preHbias = new DoubleMatrix[prelayer],
+				preVbias = new DoubleMatrix[prelayer];
 				for(int i = 0; i < prelayer; i++ ) {
 					preWeights[i] = data.get(6+i*3);
 					preHbias[i] = data.get(7+i*3);
@@ -252,83 +248,27 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		}
 		
 		public DoubleMatrix sample_h_from_v(DoubleMatrix v0) {
-			return matrixBinomial(propup(v0));
+			return MatrixMath.binom(propup(v0));
 		}
 		
 		public DoubleMatrix sample_h_from_v(DoubleMatrix v0, DoubleMatrix phase) {
 			DoubleMatrix activations = propup(v0);
 			phase.copy(activations);
-			return matrixBinomial(activations);
+			return MatrixMath.binom(activations);
 		}
 		
 		public DoubleMatrix propup(DoubleMatrix v) {
-			return sigmoid(this.weights.mmul(v.transpose()).transpose()
+			return MatrixMath.sigmoid(this.weights.mmul(v.transpose()).transpose()
 						.addi(hbias.repmat(v_data.rows, 1)));
 		}
 		
 		public DoubleMatrix sample_v_from_h(DoubleMatrix h0) {
-			return matrixBinomial(propdown(h0));
+			return MatrixMath.binom(propdown(h0));
 		}
 		
 		public DoubleMatrix propdown(DoubleMatrix h) {
-			return sigmoid(h.mmul(this.weights)
+			return MatrixMath.sigmoid(h.mmul(this.weights)
 					.addi(vbias.repmat(v_data.rows,1)));
-		}
-				
-		public DoubleMatrix sigmoid(DoubleMatrix exponent) {
-			
-			int rows = exponent.rows, cols = exponent.columns;
-			for(int i = 0; i < rows; i++) {
-				for (int j = 0; j < cols; j++) {
-					exponent.put(i,j, 1.0 / (1.0 + Math.exp(exponent.get(i, j)*-1.0)));
-				}
-			}			
-			return exponent;
-		}
-		
-		public DoubleMatrix matrixExponential(DoubleMatrix exponent) {
-			int rows = exponent.rows, cols = exponent.columns;
-			for(int i = 0; i < rows; i++) {
-				for(int j = 0; j < cols; j++) {
-					exponent.put(i,j, Math.exp(exponent.get(i,j)));
-				}
-			}
-			return exponent;
-		}
-		
-		public DoubleMatrix matrixLogarithm(DoubleMatrix logponent) {
-			int rows = logponent.rows, cols = logponent.columns;
-			for(int i = 0; i < rows; i++) {
-				for(int j = 0; j < cols; j++) {
-					logponent.put(i,j, Math.log(logponent.get(i,j)));
-				}
-			}
-			return logponent;
-		}
-		
-		public DoubleMatrix matrixBinomial(DoubleMatrix p) {
-			int rows = p.rows, cols = p.columns;
-			for(int i = 0; i < rows; i++) {
-				for (int j = 0; j < cols; j++) {
-					p.put(i,j, Math.random() < p.get(i,j) ? 1.0 : 0.0);
-				}
-			}	
-			return p;
-		}
-		
-		public DoubleMatrix matrixSum(DoubleMatrix summant, int axis ) {
-			int rows = axis==0 ? summant.rows : 1, cols = axis==0 ? 1 : summant.columns;
-			DoubleMatrix sum = new DoubleMatrix(rows,cols);
-			if(axis == 0) {
-				for(int i = 0; i < summant.columns; i++) {
-					sum.put(1,i, summant.getColumn(i).sum());
-				}
-			} else {
-				for(int i = 0; i < summant.rows; i++) {
-					sum.put(i,1, summant.getRow(i).sum());
-				}
-			}
-			return sum;
 		}
 						
 		public void weight_contribution(DoubleMatrix h0,DoubleMatrix v0,
@@ -344,7 +284,10 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 		public DoubleMatrix free_energy(DoubleMatrix v_sample) {
 			DoubleMatrix wv_hb = weights.mmul(v_sample.transpose()).addi(this.hbias.repmat(v_sample.rows,1).transpose());
 			DoubleMatrix vb = v_sample.mmul(this.vbias.transpose());
-			DoubleMatrix hi = matrixSum(matrixLogarithm(matrixExponential(wv_hb).addi(1.0)),1);
+			DoubleMatrix hi = MatrixMath.sum(
+					MatrixMath.log(
+					MatrixMath.exp(
+							wv_hb).addi(1.0)),1);
 			return hi.mul(-1.0).subi(vb);
 		}
 	}
@@ -399,7 +342,6 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			jBLASArrayWritable outputmatrix = new jBLASArrayWritable(output_array);
 			context.write(key,outputmatrix);
 		}
-		
 	}
 	
 	@Override
@@ -441,8 +383,7 @@ public class BinarySigmoidRBM extends Configured implements Tool {
 			} else {
 				other_args.add(inputArgs[i]);
 			}
-		}
-		
+		}	
 		String[] tool_args = other_args.toArray(new String[0]);
 		int result = ToolRunner.run(conf, new BinarySigmoidRBM(), tool_args);
 		System.exit(result);

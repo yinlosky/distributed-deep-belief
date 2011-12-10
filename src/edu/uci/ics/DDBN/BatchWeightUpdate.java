@@ -40,9 +40,9 @@ public class BatchWeightUpdate extends BatchUpdater {
 	@Override
 	public void update() throws IOException {
 		if (!fs.exists(updateTo) || !fs.exists(updateFrom)) {
-			System.err.println(updateTo.toString() +
-					" <- " + updateFrom.toString() +
-					" : Not a valid update set");
+			System.err.println(updateTo.getName() +
+					" <- " + updateFrom.getName() +
+					" : File does not exist");
 			return;
 		}
 		

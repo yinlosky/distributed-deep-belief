@@ -9,7 +9,6 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.SequenceFile;
@@ -28,13 +27,12 @@ public class LayerWeightAddition extends BatchUpdater{
 	public static void main(String[] args) throws IOException {
 		Configuration conf = new Configuration();
 		
-		conf.setBoolean("minibatch.job.setup",true);
-		DistributedCache.addCacheFile(new Path("/home/hadoop/batch-conf.xml").toUri(),conf);
+		Path confFile = new Path("/home/hadoop/batch-conf.xml");
 		
 		FileSystem fs = FileSystem.getLocal(conf);
 		Path updateTo = new Path(args[0]);
 		Path updateFrom = new Path(args[1]);
-		LayerWeightAddition lwa = new LayerWeightAddition(fs,updateTo, updateFrom, 2);
+		LayerWeightAddition lwa = new LayerWeightAddition(fs,updateTo, updateFrom, 2, confFile);
 		lwa.update();
 	}
 
@@ -43,27 +41,28 @@ public class LayerWeightAddition extends BatchUpdater{
 	private int layers;
 	private int classCount;
 	
-	public LayerWeightAddition(Path updateTo, Path updateFrom, int layer)
+	public LayerWeightAddition(Path updateTo, Path updateFrom, int layer, Path confFile)
 		throws IOException {
 		super(new Configuration(), updateTo, updateFrom);
 		hiddenNodes = new ArrayList<Integer>();
 		setLayer(layer);
-		this.setup();
+		this.setup(confFile);
 	}
 	
 	public LayerWeightAddition(Configuration conf, 
-			Path updateTo, Path updateFrom, int layer) throws IOException {
+			Path updateTo, Path updateFrom, int layer, Path confFile) throws IOException {
 		super(conf,updateTo,updateFrom);
 		hiddenNodes = new ArrayList<Integer>();
 		setLayer(layer);
-		this.setup();
+		this.setup(confFile);
 	}
 	
-	public LayerWeightAddition(FileSystem fs, Path updateTo, Path updateFrom, int layer) throws InvalidInputException {
+	public LayerWeightAddition(FileSystem fs, Path updateTo,
+			Path updateFrom, int layer, Path confFile) throws InvalidInputException {
 		super(fs,updateTo,updateFrom);
 		hiddenNodes = new ArrayList<Integer>();
 		setLayer(layer);
-		this.setup();
+		this.setup(confFile);
 	}
 
 	public void setLayer(int layer) throws InvalidInputException {
@@ -109,12 +108,12 @@ public class LayerWeightAddition extends BatchUpdater{
 		layerHbias = updateData.get(1);
 		layerVbias = updateData.get(2);
 		
-		int visibleInput = layer == layers ? hiddenNodes.get(layer-1) + classCount 
-										   : hiddenNodes.get(layer-1);
+		//int visibleInput = layer == layers ? hiddenNodes.get(layer-1) + classCount 
+		//								   : hiddenNodes.get(layer-1);
 		
-		initWeight = DoubleMatrix.randn(hiddenNodes.get(layer),visibleInput);
+		initWeight = DoubleMatrix.randn(hiddenNodes.get(layer),hiddenNodes.get(layer-1));
 		initHbias = DoubleMatrix.zeros(1,hiddenNodes.get(layer));
-		initVbias = DoubleMatrix.zeros(1,visibleInput);
+		initVbias = DoubleMatrix.zeros(1,hiddenNodes.get(layer-1));
 		
 		reader_updateFrom.close();
 		
@@ -136,18 +135,8 @@ public class LayerWeightAddition extends BatchUpdater{
 		fs.rename(writeLoc, updateTo);
 	}
 	
-	public void setup() {
-		if (conf.getBoolean("minibatch.job.setup", false)) {
-			Path[] jobSetupFiles = new Path[0];
-			try {
-				jobSetupFiles = DistributedCache.getLocalCacheFiles(conf);	
-			} catch (IOException ioe) {
-				System.err.println("Caught exception while getting cached files: " + StringUtils.stringifyException(ioe));
-			}
-			for (Path jobSetup : jobSetupFiles) {
-				parseJobSetup(jobSetup);
-			}
-		}
+	public void setup(Path confFile) {
+		parseJobSetup(confFile);
 	}
 
 	private String xmlGetSingleValue(Element el, String tag) {

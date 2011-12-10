@@ -15,7 +15,6 @@ import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.jBLASArrayWritable;
 import org.jblas.DoubleMatrix;
-import org.jblas.DoubleMatrix;
 
 public class FileCheck {
 
@@ -35,10 +34,11 @@ public class FileCheck {
 		ArrayList<DoubleMatrix> vals = value.getData();
 		for(DoubleMatrix val : vals) {
 			if(val != null) {
+				System.out.println(val.rows + ", " + val.columns);
 				if(val.length == 28*28) {
 					val.reshape(28, 28);
 					makeImage(val);
-				} else if(val.length == 500*28*28) {
+				} else if(val.length >= 500*28*28) {
 					makeImage(val);
 				}
 			}
@@ -50,7 +50,6 @@ public class FileCheck {
 		JFrame frame = new JFrame("Render " + mat.hashCode());
 		frame.setSize(mat.columns + 50,mat.rows + 50);
 		frame.getContentPane().add(draw);
-		System.out.println(mat.rows + ", " + mat.columns);
 		frame.setVisible(true);
 	}
 	
