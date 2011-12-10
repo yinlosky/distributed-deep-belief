@@ -1,19 +1,14 @@
 package edu.uci.ics.DDBN;
 
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.lang.String;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LabelImageWritable;
 import org.apache.hadoop.io.SequenceFile;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.SequenceFile.Writer;
 
 public class FileManipulator {
@@ -60,17 +55,17 @@ public class FileManipulator {
 		byte[] image_buffer = new byte[rows*cols];
 		
 		Configuration conf = new Configuration();
-	    conf.addResource(new Path("/home/hadoop/hadoop/conf/core-site.xml"));
-	    conf.addResource(new Path("/home/hadoop/hadoop/conf/hdfs-site.xml"));
-	    FileSystem fs = FileSystem.get(conf);
+	    //conf.addResource(new Path("/home/hadoop/hadoop/conf/core-site.xml"));
+	    //conf.addResource(new Path("/home/hadoop/hadoop/conf/hdfs-site.xml"));
+	    FileSystem fs = FileSystem.getLocal(conf);
 	    
-		Path path = new Path("/user/hadoop/MNIST/training_images");
+		Path path = new Path("/home/hadoop/MNIST/testing/images");
 		try {
-			Writer fileWriter = SequenceFile.createWriter(fs,conf,path,IntWritable.class,LabelImageWritable.class);
+			Writer fileWriter = SequenceFile.createWriter(fs,conf,path,Text.class,LabelImageWritable.class);
 			for(int i = 0; i < count; i++) {
 				stream.read(image_buffer);
 				labels.read(label_buffer);
-				fileWriter.append(new IntWritable(i),new LabelImageWritable((int)label_buffer[0],image_buffer,rows*cols));
+				fileWriter.append(new Text(""+i),new LabelImageWritable((int)label_buffer[0],image_buffer,rows*cols));
 			}
 			fileWriter.close();			
 		} catch (IOException e) {

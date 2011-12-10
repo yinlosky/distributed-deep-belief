@@ -1,22 +1,9 @@
 package edu.uci.ics.DDBN;
-
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.EOFException;
 import java.io.IOException;
-import java.util.ArrayList;
-
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.io.*;
-import org.apache.hadoop.io.SequenceFile.*;
-import org.apache.hadoop.mapreduce.lib.input.SequenceFileRecordReader;
-import org.jblas.DoubleMatrix;
 
 public class OutputSplitDir {
 	SequenceFile.Reader reader;
